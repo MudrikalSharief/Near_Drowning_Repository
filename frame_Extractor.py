@@ -1,8 +1,8 @@
 import cv2
 import os
 
-video_path = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/videos/video2.mp4"
-output_dir = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/frame_extracted"
+video_path = "C:/Users/User's/Desktop/Near_Drowning_Repository/videos/video1.mp4"
+output_dir = "C:/Users/User's/Desktop/Near_Drowning_Repository/videos/frame_extracted"
 
 video_name = os.path.basename(video_path)
 print("Video name:", video_name)
