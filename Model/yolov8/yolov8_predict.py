@@ -2,10 +2,10 @@ import cv2
 from ultralytics import YOLO
 
 # Load the YOLO model
-model = YOLO("C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/Model/yolov8/best.pt")
+model = YOLO("C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/Model/yolov8/PD_default.ptt")
 
 # Open the video file
-video_path = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/Model/yolov8/test_video/test.mp4"
+video_path = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/Model/yolov8/test_video/test2.mp4"
 cap = cv2.VideoCapture(video_path)
 
 # Optional: set output video writer if you want to save results

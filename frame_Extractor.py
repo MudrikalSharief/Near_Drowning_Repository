@@ -1,7 +1,7 @@
 import cv2
 import os
 
-video_path = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/videos/video2.mp4"
+video_path = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/videos/bom_video_3.mp4"
 output_dir = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/frame_extracted"
 
 video_name = os.path.basename(video_path)
@@ -9,7 +9,7 @@ print("Video name:", video_name)
 
 vid = cv2.VideoCapture(video_path)
 fps = vid.get(cv2.CAP_PROP_FPS)  # Get the video's FPS
-frames_per_second_to_save = 7    # Change this to how many frames you want per second
+frames_per_second_to_save = 5    # Change this to how many frames you want per second
 
 currentframe = 0
 savedframe = 0
