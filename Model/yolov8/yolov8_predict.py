@@ -2,7 +2,7 @@ import cv2
 from ultralytics import YOLO
 
 # Load the YOLO model
-model = YOLO("C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/Model/yolov8/PD_default.ptt")
+model = YOLO("C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/Model/yolov8/PD_default.pt")
 
 # Open the video file
 video_path = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/Model/yolov8/test_video/test2.mp4"
