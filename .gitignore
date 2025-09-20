@@ -1,5 +1,5 @@
 # Ignore extracted frames
 frame_extracted/
 videos/
-output.mp4
+*.mp4
 *.mp4
