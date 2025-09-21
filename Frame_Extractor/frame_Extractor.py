@@ -1,8 +1,8 @@
 import cv2
 import os
 
-video_path = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/videos/bom_video_3.mp4"
-output_dir = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/frame_extracted"
+video_path = "../Near_Drowning_Repository/sample_videos/video1.mp4"
+output_dir = "../Near_Drowning_Repository/Frame_Extractor/frame_extracted"
 
 video_name = os.path.basename(video_path)
 print("Video name:", video_name)
@@ -14,8 +14,8 @@ frames_per_second_to_save = 5    # Change this to how many frames you want per s
 currentframe = 0
 savedframe = 0
 
-if not os.path.exists('frame_extracted'):
-    os.makedirs('frame_extracted')
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
 
 video_name_no_ext = os.path.splitext(video_name)[0]
 save_dir = os.path.join(output_dir, video_name_no_ext)

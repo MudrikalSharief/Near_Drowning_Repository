@@ -2,10 +2,10 @@ import cv2
 from ultralytics import YOLO
 import os 
 # Load the YOLO model
-model = YOLO("C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/Model/yolov8/PD_default.pt")
+model = YOLO("../Near_Drowning_Repository/Model/yolov8/PD_default.pt")
 
 # Open the video file
-video_path = "C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/Model/yolov8/test_video/test2.mp4"
+video_path = "../Near_Drowning_Repository/test_video/test2.mp4"
 cap = cv2.VideoCapture(video_path)
 video_name = os.path.basename(video_path)
 print("Video name:", video_name)
@@ -13,7 +13,7 @@ print("Video name:", video_name)
 # Optional: set output video writer if you want to save results
 save_output = True
 if save_output:
-    output_dir = 'C:/Users/Lenovo Slim i3/Documents/GitHub/Near_Drowning_Repository/Model/yolov8/output_videos'
+    output_dir = '../Near_Drowning_Repository/Model/yolov8/output_vid/yolov8/'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -21,7 +21,7 @@ if save_output:
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    output_path = os.path.join(output_dir, f"output_{video_name}")
+    output_path = os.path.join(output_dir, f"yolo_{video_name}")
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
 # Loop through the video frames
