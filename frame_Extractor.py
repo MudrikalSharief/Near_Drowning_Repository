@@ -1,15 +1,27 @@
 import cv2
 import os
 
-video_path = "C:/Users/User's/Desktop/Near_Drowning_Repository/videos/video1.mp4"
-output_dir = "C:/Users/User's/Desktop/Near_Drowning_Repository/videos/frame_extracted"
+# Use raw strings (r"") to handle backslashes properly
+video_path = r"C:\Users\User's\Desktop\Near_Drowning_Repository\videos\ian_vid1.mp4"
+output_dir = r"C:\Users\User's\Desktop\Near_Drowning_Repository\videos\frame_extracted"
 
 video_name = os.path.basename(video_path)
 print("Video name:", video_name)
 
+# Check if video file exists
+if not os.path.exists(video_path):
+    print(f"Error: Video file not found at {video_path}")
+    exit()
+
 vid = cv2.VideoCapture(video_path)
+
+# Check if video opened successfully
+if not vid.isOpened():
+    print("Error: Cannot open video file")
+    exit()
+
 fps = vid.get(cv2.CAP_PROP_FPS)  # Get the video's FPS
-frames_per_second_to_save = 7    # Change this to how many frames you want per second
+frames_per_second_to_save = 3    # Change this to how many frames you want per second
 
 currentframe = 0
 savedframe = 0
