@@ -1,2 +1,4 @@
 # Ignore extracted frames
 frame_extracted/
+videos/
+*.mp4
