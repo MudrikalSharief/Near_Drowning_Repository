@@ -25,7 +25,7 @@ num_classes = 6  # background + your class(es)
 in_features = model.roi_heads.box_predictor.cls_score.in_features
 model.roi_heads.box_predictor = torchvision.models.detection.faster_rcnn.FastRCNNPredictor(in_features, num_classes)
 
-model_path = "../Near_Drowning_Repository/Model/Faster_RCNN/FRCNN.pth"
+model_path = "../Near_Drowning_Repository/Model/Faster_RCNN/FRCNN_2.pth"
 video_path = "../Near_Drowning_Repository/test_video/test2.mp4"
 output_dir = "../Near_Drowning_Repository/output_vid/FRCNN/"
 
