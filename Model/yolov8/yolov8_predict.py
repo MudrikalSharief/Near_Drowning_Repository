@@ -1,11 +1,25 @@
+# if only use CPU
+# pip install torch torchvision torchaudio
+# Yif use GPU
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 import cv2
+import torch
 from ultralytics import YOLO
 import os 
-# Load the YOLO model
-model = YOLO("../Near_Drowning_Repository/Model/yolov8/PD_default.pt")
+
+# Check if GPU is available
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device: {device}")
+
+# Wait for user to press any key before running
+input("Press Enter to continue...")
+
+# Load the YOLO model and move it to the device
+model = YOLO("../Near_Drowning_Repository/Model/yolov8/latest_model.pt")
+model.to(device)
 
 # Open the video file
-video_path = "../Near_Drowning_Repository/test_video/test2.mp4"
+video_path = "../Near_Drowning_Repository/test_video/swimming18.mp4"
 cap = cv2.VideoCapture(video_path)
 video_name = os.path.basename(video_path)
 print("Video name:", video_name)
@@ -13,7 +27,7 @@ print("Video name:", video_name)
 # Optional: set output video writer if you want to save results
 save_output = True
 if save_output:
-    output_dir = '../Near_Drowning_Repository/Model/yolov8/output_vid/yolov8/'
+    output_dir = '../Near_Drowning_Repository/output_vid/yolov8/'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -32,7 +46,7 @@ while cap.isOpened():
         break
 
     # Run YOLO inference on the frame
-    results = model(frame)
+    results = model(frame, device=device)
 
     # Visualize the results on the frame
     annotated_frame = results[0].plot()
