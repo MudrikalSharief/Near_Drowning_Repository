@@ -1,0 +1,10 @@
+# pip install -r requirements.txt
+streamlit 
+lap
+roboflow
+torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu118
+pycocotools
+matplotlib
+tqdm
+albumentations
+opencv-python

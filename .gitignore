@@ -2,7 +2,27 @@
 frame_extracted/
 videos/
 *.mp4
-#  ignore entire directories that contain images
+
+# Ignore entire directories that contain images
 FRCNN_Training/train/
 FRCNN_Training/valid/
 FRCNN_Training/test/
+
+# Ignore the dataset folder structure
+FRCNN_Training/Near_Drowning_Detector-7/
+
+# Ignore all image files in FRCNN_Training
+FRCNN_Training/**/*.jpg
+FRCNN_Training/**/*.jpeg
+FRCNN_Training/**/*.png
+FRCNN_Training/**/*.bmp
+FRCNN_Training/**/*.tiff
+FRCNN_Training/**/*.gif
+
+# Ignore any image files at any level
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tiff
+*.gif
