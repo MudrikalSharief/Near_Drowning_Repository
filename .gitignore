@@ -2,3 +2,7 @@
 frame_extracted/
 videos/
 *.mp4
+#  ignore entire directories that contain images
+FRCNN_Training/train/
+FRCNN_Training/valid/
+FRCNN_Training/test/
