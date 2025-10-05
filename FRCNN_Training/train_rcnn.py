@@ -8,7 +8,7 @@ from tqdm import tqdm
 import csv
 
 from dataset import RoboflowCocoDataset
-from transforms import Compose, ToTensor, RandomHorizontalFlip, collate_fn
+from transforms import Compose, ToTensor, RandomHorizontalFlip, Resize, collate_fn
 from utils import evaluate_coco, plot_training_curves
 
 
@@ -22,12 +22,11 @@ TRAIN_ANN = os.path.join(DATASET_DIR, "train/annotate", "_annotations.coco.json"
 VAL_ANN = os.path.join(DATASET_DIR, "valid/annotate", "_annotations.coco.json")
 
 def get_transform(train):
-    transforms = []
-    transforms.append(T.Resize((640, 640)))
-    transforms.append(T.ToTensor())
+    transforms = [Resize((640, 640)), ToTensor()]
     if train:
-        transforms.append(T.RandomHorizontalFlip(0.5))
-    return T.Compose(transforms)
+        transforms.append(RandomHorizontalFlip(0.5))
+    return Compose(transforms)
+
 
 
 def main():
