@@ -5,21 +5,22 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as T
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from tqdm import tqdm
-import csv
 
 from dataset import RoboflowCocoDataset
 from transforms import Compose, ToTensor, RandomHorizontalFlip, Resize, collate_fn
-from utils import evaluate_coco, plot_training_curves
-
+from utils import plot_training_curves
 
 # Get the directory where this script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_DIR = os.path.join(SCRIPT_DIR, "Near_Drowning_Detector-7")
 
+# Define paths - Use the already fixed annotation files
 TRAIN_IMAGES = os.path.join(DATASET_DIR, "train")
 VAL_IMAGES = os.path.join(DATASET_DIR, "valid")
-TRAIN_ANN = os.path.join(DATASET_DIR, "train/annotate", "_annotations.coco.json")
-VAL_ANN = os.path.join(DATASET_DIR, "valid/annotate", "_annotations.coco.json")
+
+# Use the fixed annotation files created by fix_annotation.py
+TRAIN_ANN = os.path.join(DATASET_DIR, "train/annotate", "fixed__annotations.coco.json")
+VAL_ANN = os.path.join(DATASET_DIR, "valid/annotate", "fixed__annotations.coco.json")
 
 def get_transform(train):
     transforms = [Resize((640, 640)), ToTensor()]
@@ -27,10 +28,11 @@ def get_transform(train):
         transforms.append(RandomHorizontalFlip(0.5))
     return Compose(transforms)
 
-
-
 def main():
     # --- Dataset & Dataloaders ---
+    print(f"Using training annotations: {TRAIN_ANN}")
+    print(f"Using validation annotations: {VAL_ANN}")
+    
     train_dataset = RoboflowCocoDataset(TRAIN_IMAGES, TRAIN_ANN, transforms=get_transform(train=True))
     val_dataset = RoboflowCocoDataset(VAL_IMAGES, VAL_ANN, transforms=get_transform(train=False))
 
@@ -39,6 +41,9 @@ def main():
 
     # --- Model ---
     num_classes = 1 + len(train_dataset.cat_id_map)
+    print(f"Number of classes: {num_classes}")
+    print(f"Class labels: {train_dataset.labels}")
+    
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
@@ -54,17 +59,7 @@ def main():
 
     # --- Training ---
     num_epochs = 40
-    train_losses, val_losses, map50s, map5095s, precisions, recalls = [], [], [], [], [], []
-
-    csv_path = "./training_log.csv"
-    if os.path.exists(csv_path):
-        os.remove(csv_path)
-
-    with open(csv_path, mode="w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["epoch", "train_loss", "val_loss", "mAP50", "mAP@[.5:.95]", "Precision", "Recall"])
-
-    coco_gt = val_dataset.coco
+    train_losses, val_losses = [], []
 
     for epoch in range(num_epochs):
         model.train()
@@ -106,45 +101,24 @@ def main():
 
         avg_val_loss = val_loss / len(val_loader)
         val_losses.append(avg_val_loss)
-        print(f"Validation loss: {avg_val_loss:.4f}")
+        
+        print(f"Epoch {epoch+1}: Train Loss={avg_train_loss:.4f}, Val Loss={avg_val_loss:.4f}")
 
-        # --- COCO evaluation ---
-        print(f"\nRunning COCO evaluation after epoch {epoch+1}...")
-        coco_stats = evaluate_coco(model, val_loader, val_dataset.coco, device, val_dataset.inv_cat_id_map)
-        if coco_stats:
-            map5095 = coco_stats["mAP@[.5:.95]"]
-            map50 = coco_stats["mAP@0.50"]
-            precision = coco_stats.get("Precision", 0)
-            recall = coco_stats.get("Recall", 0)
-        else:
-            map5095, map50, precision, recall = 0, 0, 0, 0
-
-        map5095s.append(map5095)
-        map50s.append(map50)
-        precisions.append(precision)
-        recalls.append(recall)
-
-        print(f"Epoch {epoch+1}: Train={avg_train_loss:.4f}, Val={avg_val_loss:.4f}, "
-              f"mAP50={map50:.4f}, mAP@[.5:.95]={map5095:.4f}, "
-              f"Precision={precision:.4f}, Recall={recall:.4f}")
-
-        # --- Save results ---
-        with open(csv_path, mode="a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([epoch+1, avg_train_loss, avg_val_loss, map50, map5095, precision, recall])
-
+        # --- Save checkpoint every epoch ---
         ckpt_path = f"./checkpoints/fasterrcnn_epoch{epoch+1}.pth"
         os.makedirs("checkpoints", exist_ok=True)
         torch.save({
             "epoch": epoch+1,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
+            "train_loss": avg_train_loss,
+            "val_loss": avg_val_loss
         }, ckpt_path)
 
-    # --- Plot curves ---
-    plot_training_curves(train_losses, val_losses, map50s, map5095s, precisions, recalls)
-    print(f"\n📊 Training log saved at: {csv_path}")
-
+    # --- Plot training curves (loss only) ---
+    plot_training_curves(train_losses, val_losses, [], [], [], [])
+    print(f"\n📊 Training completed! Checkpoints saved in ./checkpoints/")
+    print(f"📊 Run the evaluation script to generate CSV with mAP metrics.")
 
 if __name__ == "__main__":
     main()
