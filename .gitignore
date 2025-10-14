@@ -2,6 +2,7 @@
 frame_extracted/
 videos/
 *.mp4
+*.pth
 
 # Ignore entire directories that contain images
 FRCNN_Training/train/

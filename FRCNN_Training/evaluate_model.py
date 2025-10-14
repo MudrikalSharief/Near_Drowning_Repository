@@ -55,9 +55,9 @@ def evaluate_checkpoint(checkpoint_path, val_loader, val_dataset, device):
 def main():
     # Setup paths
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    DATASET_DIR = os.path.join(SCRIPT_DIR, "Near_Drowning_Detector-7")
+    DATASET_DIR = os.path.join(SCRIPT_DIR, "Near_Drowning_Detector-8")
     VAL_IMAGES = os.path.join(DATASET_DIR, "valid")
-    VAL_ANN = os.path.join(DATASET_DIR, "valid/annotate", "fixed__annotations.coco.json")
+    VAL_ANN = os.path.join(DATASET_DIR, "valid/annotate", "_annotations.coco.json")
     
     # Load validation dataset
     val_dataset = RoboflowCocoDataset(VAL_IMAGES, VAL_ANN, transforms=Compose([Resize((640, 640)), ToTensor()]))
@@ -67,7 +67,7 @@ def main():
     print(f"Using device: {device}")
     
     # Find all checkpoints
-    checkpoint_pattern = "./checkpoints/fasterrcnn_epoch*.pth"
+    checkpoint_pattern = "./checkpointss/fasterrcnn_epoch*.pth"
     checkpoint_files = sorted(glob.glob(checkpoint_pattern), key=lambda x: int(x.split('epoch')[1].split('.')[0]))
     
     if not checkpoint_files:
