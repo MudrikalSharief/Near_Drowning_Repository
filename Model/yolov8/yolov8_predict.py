@@ -19,7 +19,7 @@ model = YOLO("../Near_Drowning_Repository/Model/yolov8/latest_model.pt")
 model.to(device)
 
 # Open the video file
-video_path = "../Near_Drowning_Repository/test_video/swimming13.mp4"
+video_path = "../Near_Drowning_Repository/test_video/drowning.mp4"
 cap = cv2.VideoCapture(video_path)
 video_name = os.path.basename(video_path)
 print("Video name:", video_name)

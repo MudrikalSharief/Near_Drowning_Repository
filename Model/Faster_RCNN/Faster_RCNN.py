@@ -22,7 +22,7 @@ in_features = model.roi_heads.box_predictor.cls_score.in_features
 model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
 
 # ✅ FIXED: Update paths to be relative to current working directory
-model_path = "Model/Faster_RCNN/fasterrcnn_epoch29.pth"
+model_path = "Model/Faster_RCNN/C:\Users\Lenovo\Marcelino-Portfolio\Near_Drowning_Repository\checkpoints\fasterrcnn_epoch40.pth"
 video_path = "test_video/swimming13.mp4"
 output_dir = "output_vid/FRCNN/"
 
