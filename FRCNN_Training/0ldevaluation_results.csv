@@ -1,0 +1,2 @@
+epoch,train_loss,val_loss,mAP50,mAP@[.5:.95],Precision,Recall,F1_Score,Accuracy
+40,0,0,0.907444241,0.454307103,0.454307103,0.552914855,0.985877241,0.974295601

@@ -5,55 +5,68 @@ import tempfile
 from ultralytics import YOLO
 import time
 import shutil
-from collections import defaultdict
 import base64
+import numpy as np 
 
-def play_alert_sound(audio_path):
-    with open(audio_path, "rb") as f:
-        data = f.read()
-    b64 = base64.b64encode(data).decode()
-    md = f"""
-        <audio autoplay>
-            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-        </audio>
-    """
-    st.markdown(md, unsafe_allow_html=True)
+# ==============================
+# 🔊 Utility Functions
+# ==============================
 
-# --- Audio Utility Function (Base64 Embedded - The actual alert) ---
-def create_audio_html(audio_file_path):
-    """
-    Reads the MP3 file, encodes it, and embeds an invisible audio tag with autoplay.
-    It relies on the audio context being 'unlocked' by an earlier user action (the primer).
-    """
+def play_alert_sound(audio_path, alert_id):
+    """Play an audio alert using base64 and assign a unique ID so it can be stopped."""
     try:
-        with open(audio_file_path, "rb") as f:
-            audio_b64 = base64.b64encode(f.read()).decode()
-        data_uri = f"data:audio/mp3;base64,{audio_b64}"
+        with open(audio_path, "rb") as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode()
+
+        # Give a unique audio tag ID per alert
+        audio_tag_id = f"alert_audio_{alert_id}"
+
+        md = f"""
+            <audio id="{audio_tag_id}" autoplay>
+                <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+            </audio>
+            <script>
+                if (!window.activeAudios) window.activeAudios = {{}};
+                window.activeAudios['{audio_tag_id}'] = document.getElementById('{audio_tag_id}');
+            </script>
+        """
+        st.markdown(md, unsafe_allow_html=True)
     except FileNotFoundError:
-        st.error(f"❌ Audio file not found at: {audio_file_path}")
-        return ""
-    except Exception as e:
-        st.error(f"❌ Error encoding audio file: {e}")
-        return ""
+        st.error(f"Alert sound file not found at: {audio_path}")
 
-    # The 'autoplay' attribute should work now that the context is unlocked.
-    html_code = f"""
-    <audio id="alert_audio" src="{data_uri}" preload="auto" autoplay></audio>
-    <style>
-        #alert_audio {{ display: none; }}
-    </style>
-    """
-    return html_code
-# --- End Audio Utility Function (The actual alert) ---
 
-# -------------------------------------------------------------
+def stop_alert_sound(alert_id=None):
+    """Stop specific or all active alert sounds."""
+    if alert_id:
+        stop_script = f"""
+            <script>
+                if (window.activeAudios && window.activeAudios['alert_audio_{alert_id}']) {{
+                    let a = window.activeAudios['alert_audio_{alert_id}'];
+                    a.pause();
+                    a.currentTime = 0;
+                    delete window.activeAudios['alert_audio_{alert_id}'];
+                }}
+            </script>
+        """
+    else:
+        stop_script = """
+            <script>
+                if (window.activeAudios) {
+                    for (const id in window.activeAudios) {
+                        let a = window.activeAudios[id];
+                        a.pause();
+                        a.currentTime = 0;
+                    }
+                    window.activeAudios = {};
+                }
+            </script>
+        """
+    st.markdown(stop_script, unsafe_allow_html=True)
 
-# --- Audio Primer Utility (To unlock browser autoplay) ---
+
 def create_audio_primer_html(audio_file_path):
-    """
-    Generates an audio element and attempts a play() operation once.
-    This is called immediately after a user click to satisfy browser autoplay policy.
-    """
+    """Prime browser audio context for autoplay permission."""
     try:
         with open(audio_file_path, "rb") as f:
             audio_b64 = base64.b64encode(f.read()).decode()
@@ -61,17 +74,14 @@ def create_audio_primer_html(audio_file_path):
     except Exception:
         return ""
 
-    # Use JavaScript to attempt playback immediately on rendering
     html_code = f"""
-    <audio id="primer_audio" src="{data_uri}" preload="auto" controls></audio>
+    <audio id="primer_audio" src="{data_uri}" preload="auto"></audio>
     <script>
         var audio = document.getElementById('primer_audio');
         if (audio) {{
-            // Attempt an immediate play on load (within the user-interaction context)
-            audio.volume = 0.01; // Keep it quiet
+            audio.volume = 0.01; 
             audio.play().catch(function(error) {{
-                // This is expected if playback is blocked, but the context may still be unlocked
-                console.warn("Primer play failed, but the browser audio context might be unlocked:", error);
+                console.warn("Primer play failed:", error);
             }});
         }}
     </script>
@@ -80,21 +90,31 @@ def create_audio_primer_html(audio_file_path):
     </style>
     """
     return html_code
-# --- End Audio Primer Utility ---
 
-# -------------------------------------------------------------
-# --- Configuration & Utility Functions ---
+def scale_bbox_to_original(x1, y1, x2, y2, scale_x, scale_y):
+    """Scales bounding box coordinates from a resized frame back to the original frame size."""
+    # NOTE: The original code had a bug here, scaling x2 and y2 by scale_y.
+    # It should be x2 by scale_x and y2 by scale_y. Correcting the logic:
+    x1_orig = int(x1 * scale_x)
+    y1_orig = int(y1 * scale_y)
+    x2_orig = int(x2 * scale_x) # Corrected from scale_y
+    y2_orig = int(y2 * scale_y)
+    return x1_orig, y1_orig, x2_orig, y2_orig
 
-DEFAULT_MODEL_NAME = "C:/Users/Lenovo/Marcelino-Portfolio/Near_Drowning_Repository/Model/yolov8/best.pt" 
+# ==============================
+# ⚙️ Configuration
+# ==============================
+
+# NOTE: Update these paths to match your system configuration
+DEFAULT_MODEL_NAME = "C:/Users/Lenovo/Marcelino-Portfolio/Near_Drowning_Repository/Model/yolov8/best.pt"
 AUDIO_FILE_PATH = "C:/Users/Lenovo/Marcelino-Portfolio/Near_Drowning_Repository/Model/yolov8/alert.mp3"
 UPLOAD_DIR = "uploaded_videos"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Dictionary to store object start times: {track_id: start_time_seconds}
-object_start_times = {} 
-# Dictionary to store the class ID of the object when it was first seen: {track_id: class_id}
-object_class_map = {}
 
+# ==============================
+# 🧠 Cached Model Loader
+# ==============================
 
 @st.cache_resource
 def load_model(model_path, device):
@@ -104,328 +124,431 @@ def load_model(model_path, device):
         model.to(device)
         return model
     except Exception as e:
-        if model_path == DEFAULT_MODEL_NAME and not os.path.exists(model_path):
-            st.error(f"❌ Error: Default model `{model_path}` not found. Please place it in the application directory or upload a custom model.")
+        if not os.path.exists(model_path):
+            st.error(f"❌ Model file not found: `{model_path}`")
         else:
-            st.error(f"❌ Error loading model from `{model_path}`: {e}")
+            st.error(f"❌ Error loading model: {e}")
         st.stop()
-        
-# --- Streamlit Page Setup ---
 
-st.set_page_config(
-    page_title="YOLOv8 + ByteTrack Object Tracker",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
-st.title("👁️ Real-Time Object Tracking with YOLOv8 & ByteTrack")
-st.caption(
-    "Alert triggers when a tracked object maintains its ID and class for a specified duration."
-)
+# ==============================
+# 🎨 Streamlit Setup
+# ==============================
+
+st.set_page_config(page_title="Near-Drowning Detection Tracker", layout="wide")
+st.title("🏊 Duration-Based Object Tracker & Alert System")
+st.caption("Monitors near-drowning incidents based on tracked duration.")
 st.markdown("---")
 
-# --- Session State Initialization ---
-if "selected_video_path" not in st.session_state:
-    st.session_state.selected_video_path = None
-if "video_name" not in st.session_state:
-    st.session_state.video_name = "None Selected"
+
+# ==============================
+# 🔄 Session State Setup
+# ==============================
+
+if "source_type" not in st.session_state:
+    st.session_state.source_type = 'Upload Video File'
+if "video_source" not in st.session_state:
+    st.session_state.video_source = None # Stores path for video file OR camera index for webcam
+if "is_running" not in st.session_state:
+    st.session_state.is_running = False
 if "selected_classes" not in st.session_state:
     st.session_state.selected_classes = []
+if "first_seen_frame" not in st.session_state:
+    st.session_state.first_seen_frame = {}
+if "last_seen_frame" not in st.session_state:
+    st.session_state.last_seen_frame = {}
+if "alert_triggered_ids_current" not in st.session_state:
+    st.session_state.alert_triggered_ids_current = set()
+if "dismissed_alerts" not in st.session_state:
+    st.session_state.dismissed_alerts = set()
+if "stop_sound_pending" not in st.session_state:
+    st.session_state.stop_sound_pending = None 
+if "camera_index" not in st.session_state:
+    st.session_state.camera_index = 0
+if "camera_cap" not in st.session_state:
+    st.session_state.camera_cap = None
 
 
-# --- Sidebar: Model & Technical Settings ---
-model = None
-model_path = None
+# 🧩 Handle any pending sound stop (after button rerun)
+if st.session_state.stop_sound_pending is not None:
+    stop_alert_sound(alert_id=st.session_state.stop_sound_pending)
+    st.session_state.stop_sound_pending = None
+
+# Callback for stopping the webcam feed
+def stop_detection():
+    st.session_state.is_running = False
+    stop_alert_sound()
+    st.session_state.first_seen_frame.clear()
+    st.session_state.last_seen_frame.clear()
+    st.session_state.alert_triggered_ids_current.clear()
+    st.session_state.dismissed_alerts.clear()
+    # Release camera object if it exists
+    if st.session_state.camera_cap:
+        st.session_state.camera_cap.release()
+        st.session_state.camera_cap = None
+    # Rerun to clear the video output and show the start button
+    st.rerun() 
+
+# ==============================
+# 🧩 Sidebar Settings
+# ==============================
+
+model_path = DEFAULT_MODEL_NAME
 use_custom_model = False
-tmpdir = None 
-alert_min_duration = 3.0 # Default alert duration
+tmpdir = None
 
 with st.sidebar:
-    st.header("⚙️ Model & Technical Settings")
-    
-    # 1. Model Configuration (Upload/Default)
-    use_custom_model = st.checkbox("Upload custom YOLO model (.pt)", value=False)
-    model_display = DEFAULT_MODEL_NAME
-    
-    if use_custom_model:
-        model_file = st.file_uploader("Upload custom model file (.pt)", type=["pt"])
-        if model_file:
-            tmpdir = tempfile.mkdtemp()
-            model_path = os.path.join(tmpdir, model_file.name)
-            with open(model_path, "wb") as f:
-                f.write(model_file.getbuffer())
-            model_display = model_file.name
+    st.header("⚙️ Model & Performance")
+
+    with st.expander("Model Configuration"):
+        use_custom_model = st.checkbox("Upload custom YOLO model (.pt)", value=False)
+        model_display = os.path.basename(DEFAULT_MODEL_NAME)
+
+        if use_custom_model:
+            model_file = st.file_uploader("Upload YOLO model", type=["pt"])
+            if model_file:
+                tmpdir = tempfile.mkdtemp()
+                model_path = os.path.join(tmpdir, model_file.name)
+                with open(model_path, "wb") as f:
+                    f.write(model_file.getbuffer())
+                st.success(f"✅ Custom model uploaded: {model_file.name}")
+            else:
+                st.warning("Please upload a .pt file.")
         else:
-            st.warning("Please upload a custom model file.")
-    else:
-        model_path = DEFAULT_MODEL_NAME
-        st.info(f"Using default model: `{model_path}`")
-    
-    # 2. Device Selection
-    device = st.selectbox("Processing Device", ["cuda", "cpu"], index=0, help="Choose 'cuda' for GPU acceleration if available.")
-    
-    st.markdown("---")
-    
-    # --- 🌟 ALERT SETTINGS (Duration Based) 🌟 ---
-    st.header("🔔 Duration Alert Settings")
-    
-    # Input for the required duration
-    alert_min_duration = st.number_input(
-        "Alert if same object ID/Class is tracked for (Seconds)",
-        min_value=0.1,
-        value=3.0,
-        step=0.5,
-        format="%.1f",
-        help="The minimum continuous duration for a specific object to trigger an alarm. ByteTrack assigns the unique ID."
-    )
-    
-    # Placeholder for the target class selection (filled after model load)
-    alert_class_selector = st.empty()
-    
-    st.markdown("---")
-    st.markdown("Powered by: `ultralytics` (YOLOv8) & `ByteTrack`")
-    
-# --- Model Loading Status & Class Selection ---
-target_alert_class_name = None
+            st.info(f"Using default model: `{model_display}`")
 
-if model_path and (os.path.exists(model_path) or (use_custom_model and model_path)):
-    with st.spinner(f"⏳ Loading model: **{model_display}** on **{device}**..."):
+        device = st.selectbox("Device", ["cuda", "cpu"], index=0)
+
+    st.markdown("---")
+
+    with st.spinner("Loading YOLOv8 model..."):
         model = load_model(model_path, device)
-        
-        if model and hasattr(model.names, '__len__') and len(model.names) > 0:
-            all_classes = list(model.names.values())
-            
-            st.sidebar.header("🎯 Object Filter")
-            
-            st.session_state.selected_classes = st.sidebar.multiselect(
-                "Select classes to display:",
-                options=all_classes,
-                default=all_classes, 
-                help="Only detections belonging to the selected classes will be shown."
-            )
-            
-            # Populate the Alert Class Selector
-            target_alert_class_name = alert_class_selector.selectbox(
-                "Target Class for Duration Alert:",
-                options=all_classes,
-                index=all_classes.index("person") if "person" in all_classes else 0,
-                help="The specific class whose duration will be monitored for the alert."
-            )
-            
-    st.success(f"✅ Model **{model_display}** loaded successfully!")
-else:
-    if not use_custom_model:
-        st.error("🛑 Please place the default model file or check the 'Upload custom model' box.")
-    elif use_custom_model and not model_path:
-        st.error("🛑 Waiting for custom model upload...")
-    st.stop()
+        all_classes = list(model.names.values())
 
-
-# --- Main Area: Video Upload & Selection ---
-
-col_upload, col_current = st.columns([1, 2])
-
-with col_upload:
-    st.subheader("1. Video Source")
-    uploaded_video = st.file_uploader(
-        "Upload a video file (.mp4, .mov, etc.)",
-        type=["mp4", "mov", "avi", "mkv"],
-        key="main_upload" 
+    st.header("🎯 Detection Settings")
+    
+    st.session_state.selected_classes = st.multiselect(
+        "Classes to Detect:",
+        options=all_classes,
+        default=all_classes,
+        help="Filter which objects are passed to the tracker."
     )
     
-    # Logic to save the uploaded file and update session state
+    conf_threshold = st.slider("Confidence Threshold", 0.1, 1.0, 0.4, 0.05, help="Minimum confidence score for a detection to be considered valid.")
+    
+    st.markdown("---")
+
+    st.header("🔔 Alert Rules")
+    
+    alert_min_duration = st.number_input(
+        "Target Duration (seconds)",
+        min_value=0.1,
+        value=1.0,
+        step=0.1,
+        format="%.1f",
+        help="Time an object must be tracked before an alert is triggered."
+    )
+
+    default_index = all_classes.index("near-drowning") if "near-drowning" in all_classes else 0
+    target_alert_class_name = st.selectbox(
+        "Alert Target Class:",
+        options=all_classes,
+        index=default_index,
+        help="The specific class that triggers the duration alert (e.g., 'near-drowning')."
+    )
+    
+    st.markdown("---")
+    
+    # ⭐ Frame Rate Limiter Setting
+    max_fps_limit = st.slider(
+        "Max Processing FPS (for speed)", 
+        min_value=5, 
+        max_value=60, 
+        value=30, 
+        step=5,
+        help="Limits the number of frames processed per second to save CPU/GPU resources."
+    )
+
+
+# ==============================
+# 📤 Step 1: Select Source (with Live Preview)
+# ==============================
+
+st.header("Step 1: Select Input Source")
+
+# Use st.radio for clear selection between video file and webcam
+st.session_state.source_type = st.radio(
+    "Choose your input source:",
+    ['Upload Video File', 'Use Webcam'],
+    horizontal=True,
+    key='source_radio'
+)
+
+# Placeholders for source display and info
+source_col, info_col = st.columns([3, 1])
+source_display = source_col.empty()
+
+# Reset video_source when switching modes
+st.session_state.video_source = None
+
+if st.session_state.source_type == 'Upload Video File':
+    # --- Video Upload Logic ---
+    uploaded_video = st.file_uploader("Upload video file", type=["mp4", "mov", "avi", "mkv"])
     if uploaded_video:
         save_path = os.path.join(UPLOAD_DIR, uploaded_video.name)
         with open(save_path, "wb") as f:
             f.write(uploaded_video.getbuffer())
-            
-        st.session_state.selected_video_path = save_path
-        st.session_state.video_name = uploaded_video.name
-        st.success(f"✅ Video **'{uploaded_video.name}'** uploaded and selected!")
-    elif uploaded_video is None and st.session_state.selected_video_path:
-        st.session_state.selected_video_path = None
-        st.session_state.video_name = "None Selected"
-
-with col_current:
-    st.subheader("2. Selected Video Preview")
-    
-    if st.session_state.selected_video_path:
-        st.info(f"Video selected: **{st.session_state.video_name}**")
-        st.video(st.session_state.selected_video_path, format="video/mp4", start_time=0)
+        st.session_state.video_source = save_path
+        info_col.success(f"✅ Video uploaded: {uploaded_video.name}")
+        # Show video preview
+        source_display.video(st.session_state.video_source)
     else:
-        st.warning("⚠️ No video selected. Please upload one on the left.")
+        info_col.info("Please upload a video file to proceed.")
 
-# --- Main Area: Run Detection (MODIFIED for Audio Primer and Alert) --- 
-st.markdown("---") 
 
-st.header("3. Run Detection & Tracking")
+elif st.session_state.source_type == 'Use Webcam':
+    # --- Webcam Live Preview Logic ---
+    st.session_state.camera_index = st.number_input("Enter Camera Index (0 for default)", min_value=0, value=0, step=1, key='camera_index_input')
+    st.session_state.video_source = st.session_state.camera_index
+    
+    info_col.info(f"Webcam at index: {st.session_state.camera_index}")
 
-if not st.session_state.selected_video_path:
-    st.warning("Please upload or select a video above before running detection.")
-elif not st.session_state.selected_classes:
-    st.warning("⚠️ Please select at least one class in the **Object Filter** sidebar to run detection.")
+    if not st.session_state.is_running:
+        # We need a separate capture object for the PREVIEW to keep it running
+        # This cap object will be closed and re-opened when starting the main detection loop
+        cap_preview = cv2.VideoCapture(st.session_state.camera_index)
+        
+        if cap_preview.isOpened():
+            st.session_state.camera_cap = cap_preview # Store it temporarily to manage its state
+            success_prev, frame_prev = cap_preview.read()
+            if success_prev:
+                source_display.image(frame_prev, channels="BGR", caption="Webcam Live Preview (No Detection Running)", use_container_width=True)
+            else:
+                source_display.error("Cannot read camera feed. Check index or permissions.")
+            
+            # Release the preview cap immediately so the main loop can re-open it later
+            cap_preview.release()
+            st.session_state.camera_cap = None
+        else:
+            source_display.error("Webcam not found or access denied. Check camera index.")
+
+
+st.markdown("---")
+
+
+# ==============================
+# 🚀 Step 2: Run Detection
+# ==============================
+
+st.header("Step 2: Run Detection & Tracking")
+
+source_is_ready = (st.session_state.video_source is not None)
+
+selected_class_ids = [k for k, v in model.names.items() if v in st.session_state.selected_classes]
+target_alert_class_id = next((k for k, v in model.names.items() if v == target_alert_class_name), None)
+
+
+# Button logic
+if st.session_state.is_running:
+    # Dedicated Stop button when detection is running
+    st.button("🛑 STOP DETECTION", type="secondary", use_container_width=True, on_click=stop_detection)
+elif source_is_ready and model:
+    # Dedicated Start button when source is ready
+    st.button("▶️ START DETECTION & TRACKING", type="primary", use_container_width=True, key="start_main_button")
+    if st.session_state.start_main_button:
+        # Set running state and rerun to start the loop below
+        st.session_state.is_running = True
+        st.rerun() # <<< CORRECTED: Replaced st.experimental_rerun() with st.rerun()
 else:
-    # Detection Settings
-    conf_threshold = st.slider(
-        "Confidence Threshold (min probability for detection)", 
-        0.1, 1.0, 0.4, 0.05,
-        key="conf_slider",
-        help="Lowering this value may increase detections but also false positives."
-    )
+    st.warning("Please ensure a source is selected and the model is loaded.")
+
+
+# --- Main Detection Loop ---
+if st.session_state.is_running:
     
-    selected_class_ids = [k for k, v in model.names.items() if v in st.session_state.selected_classes]
+    # Reset tracking/alert state for a new run
+    st.session_state.first_seen_frame.clear()
+    st.session_state.last_seen_frame.clear()
+    st.session_state.alert_triggered_ids_current.clear()
+    st.session_state.dismissed_alerts.clear()
     
-    # Get the ID of the target alert class
-    target_alert_class_id = next(
-        (k for k, v in model.names.items() if v == target_alert_class_name), 
-        None
-    )
+    # Prepare layout
+    col_video, col_alert = st.columns([3, 1])
+    # Use the source_display placeholder from Step 1 for the video output in detection mode
+    # If not possible (due to scope), use a new one:
+    stframe = col_video.empty() 
+    alert_placeholder = col_alert.empty()
+    
+    # Prime browser audio permission
+    primer_placeholder = st.empty()
+    primer_placeholder.markdown(create_audio_primer_html(AUDIO_FILE_PATH), unsafe_allow_html=True)
+    time.sleep(0.1)
+    primer_placeholder.empty()
 
-    if target_alert_class_id is None:
-        st.error(f"Internal error: Could not find class ID for '{target_alert_class_name}'.")
-        st.stop()
+    # Initialize video capture (path for file, index for webcam)
+    cap = cv2.VideoCapture(st.session_state.video_source)
+    
+    if not cap.isOpened():
+        st.error("Failed to open capture source. Stopping detection.")
+        stop_detection()
+        st.rerun() # <<< CORRECTED: Replaced st.experimental_rerun() with st.rerun()
 
-
-    # Alert placeholder setup
-    alert_placeholder = st.empty()
-    alert_triggered_for_id = None # Store the ID that triggered the current alert
-
-    # Run button
-    if st.button("▶️ START DETECTION & TRACKING", type="primary", use_container_width=True):
+    # Get FPS for video files, assume 30 for live camera if unavailable
+    if st.session_state.source_type == 'Upload Video File':
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    else:
+        # For live camera, use the max_fps_limit as the effective processing rate.
+        fps = max_fps_limit 
         
-        # --- 1. 🔊 AUDIO PRIMER EXECUTION (THE CRITICAL STEP) 🔊
-        audio_file_path = "C:/Users/Lenovo/Marcelino-Portfolio/Near_Drowning_Repository/Model/yolov8/alert.mp3" 
-        
-        # Use a temporary placeholder to insert and immediately clear the primer audio
-        primer_placeholder = st.empty()
-        primer_placeholder.markdown(
-            create_audio_primer_html(audio_file_path), 
-            unsafe_allow_html=True
-        )
-        time.sleep(0.1) # A short pause to ensure the HTML is rendered before clearing
-        primer_placeholder.empty() # Remove the primer element after a fraction of a second
-        st.info("Audio context primed. The alert sound should now play when triggered.")
-        # --------------------------------------------------------
+    frame_index = 0
+    
+    # ⭐ FRAME RATE LIMITING SETUP
+    if st.session_state.source_type == 'Upload Video File' and fps > max_fps_limit:
+        SKIP_INTERVAL = max(1, round(fps / max_fps_limit))
+        st.info(f"Video FPS: {fps:.2f}. **Target FPS is {max_fps_limit}**. Skipping {SKIP_INTERVAL - 1} frame(s) for every {SKIP_INTERVAL} processed.")
+    else:
+        SKIP_INTERVAL = 1
+        st.info(f"Processing every frame (Target: {max_fps_limit} FPS).")
 
-        # Reset tracking history for a new run
-        object_start_times.clear()
-        object_class_map.clear()
-        
-        # 🌟 FIX: Initialize the variable used for tracking the maximum count
-        total_objects_tracked = 0
-        
-        # --- Real-Time Output Section ---
-        st.subheader("⚡️ Real-Time Tracking Output")
-        
-        # 1. Setup Metrics Container
-        col_metrics_1, col_metrics_2, col_metrics_3 = st.columns(3)
-        metric_fps = col_metrics_1.empty()
-        metric_frame = col_metrics_2.empty()
-        metric_objects = col_metrics_3.empty()
-        
-        # 2. Setup Video Container
-        st.markdown("### Processed Video Stream")
-        stframe = st.empty() 
-         # --- Detection Loop (Frame-based Duration Alert) ---
-        cap = cv2.VideoCapture(st.session_state.selected_video_path)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        if fps <= 0 or fps is None:
-            fps = 30  # fallback if metadata is missing
-        frame_index = 0
+    # ⭐ INPUT RESOLUTION SETUP (For maximum speed)
+    NEW_WIDTH = 640
+    NEW_HEIGHT = 480
+    st.info(f"Processing frames internally resized to {NEW_WIDTH}x{NEW_HEIGHT} for maximum speed.")
 
-        # Trackers
-        first_seen_frame = {}     # track_id -> first frame number
-        last_seen_frame = {}      # track_id -> last frame number
-        alert_triggered_ids = set()
 
-        with st.spinner("Processing video frames..."):
-            while cap.isOpened():
-                success, frame = cap.read()
-                if not success:
+    with st.spinner("Processing feed..."):
+        while st.session_state.is_running and cap.isOpened():
+            success, frame = cap.read()
+            
+            if not success:
+                if st.session_state.source_type == 'Upload Video File':
+                    st.session_state.is_running = False # Stop on end of file
                     break
+                else:
+                    st.error("Error reading from camera. Trying again...")
+                    time.sleep(0.5) 
+                    continue
+            
+            frame_index += 1
 
-                frame_index += 1
+            # ⭐ IMPLEMENT FRAME SKIPPING
+            if (frame_index - 1) % SKIP_INTERVAL != 0:
+                continue 
 
-                # Run YOLOv8 + ByteTrack
-                results = model.track(
-                    frame,
-                    persist=True,
-                    tracker="bytetrack.yaml",
-                    conf=conf_threshold,
-                    classes=selected_class_ids,
-                    verbose=False
-                )
 
-                annotated_frame = results[0].plot()
-                boxes = results[0].boxes
-                current_detected_ids = set()
+            # ---------------------------------------------
+            # ⭐ OPTIMIZED DETECTION BLOCK 
+            # ---------------------------------------------
+            
+            # 1. Calculate scaling factors
+            h_orig, w_orig, _ = frame.shape
+            scale_x = w_orig / NEW_WIDTH
+            scale_y = h_orig / NEW_HEIGHT
+            
+            # 2. Resize the frame for FAST processing
+            resized_frame = cv2.resize(frame, (NEW_WIDTH, NEW_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
-                # --- Process detected objects ---
-                if boxes.id is not None:
-                    for box in boxes.data:
-                        track_id = int(box[4].item())
-                        class_id = int(box[5].item())
-                        current_detected_ids.add(track_id)
+            # 3. Run YOLO detection and tracking
+            results = model.track(
+                resized_frame, 
+                persist=True,
+                tracker="bytetrack.yaml",
+                conf=conf_threshold,
+                classes=selected_class_ids,
+                verbose=False
+            )
+            
+            annotated_frame = frame.copy() 
+            boxes = results[0].boxes
+            current_target_class_ids = set()
 
-                        # Only watch the target class
-                        if class_id != target_alert_class_id:
-                            continue
+            if boxes.id is not None:
+                for i in range(len(boxes)):
+                    class_id = int(boxes.cls[i].item())
+                    track_id = int(boxes.id[i].item())
+                    conf = float(boxes.conf[i].item())
+                    
+                    # Get scaled coordinates
+                    x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy().astype(int)
+                    
+                    # 4. Scale the coordinates back to the original size
+                    x1_orig, y1_orig, x2_orig, y2_orig = scale_bbox_to_original(
+                        x1, y1, x2, y2, scale_x, scale_y
+                    )
+                    
+                    # Plot the box and label
+                    class_name = model.names[class_id]
+                    label = f"id:{track_id} {class_name} {conf:.2f}"
+                    
+                    color = (0, 0, 255) if class_name == target_alert_class_name else (255, 0, 0)
+                    
+                    cv2.rectangle(annotated_frame, (x1_orig, y1_orig), (x2_orig, y2_orig), color, 2)
+                    cv2.putText(annotated_frame, label, (x1_orig, y1_orig - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                    
+                    # Tracking and Alert Logic
+                    if class_id == target_alert_class_id:
+                        current_target_class_ids.add(track_id)
+                        
+                        if track_id not in st.session_state.first_seen_frame:
+                            st.session_state.first_seen_frame[track_id] = frame_index
+                        st.session_state.last_seen_frame[track_id] = frame_index
 
-                        # Record when object first appeared
-                        if track_id not in first_seen_frame:
-                            first_seen_frame[track_id] = frame_index
-
-                        last_seen_frame[track_id] = frame_index
-
-                        # Compute how long (in seconds) it’s been seen
-                        elapsed_frames = frame_index - first_seen_frame[track_id]
+                        elapsed_frames = frame_index - st.session_state.first_seen_frame[track_id]
                         elapsed_seconds = elapsed_frames / fps
 
-                        # Trigger alert once when duration reached
-                        if elapsed_seconds >= alert_min_duration and track_id not in alert_triggered_ids:
-                            alert_triggered_ids.add(track_id)
-                            alert_placeholder.error(
-                                f"## 🚨 ALERT! Object ID **{track_id}** "
-                                f"({target_alert_class_name}) detected for {elapsed_seconds:.1f}s 🚨",
-                                icon="⚠️"
-                            )
-                            play_alert_sound(AUDIO_FILE_PATH)
-                            st.toast(f"⚠️ Alert triggered for ID {track_id} ({target_alert_class_name})")
+                        if elapsed_seconds >= alert_min_duration and track_id not in st.session_state.alert_triggered_ids_current:
+                            st.session_state.alert_triggered_ids_current.add(track_id)
+                            if track_id not in st.session_state.dismissed_alerts:
+                                play_alert_sound(AUDIO_FILE_PATH, alert_id=track_id)
+                                st.toast(f"⚠️ Alert triggered for ID {track_id} ({target_alert_class_name})")
+                            
+            # Cleanup inactive/vanished targets
+            inactive_ids = [
+                tid for tid in list(st.session_state.first_seen_frame.keys())
+                if tid not in current_target_class_ids and
+                (frame_index - st.session_state.last_seen_frame.get(tid, frame_index)) > fps
+            ]
+            for tid in inactive_ids:
+                st.session_state.first_seen_frame.pop(tid, None)
+                st.session_state.last_seen_frame.pop(tid, None)
+                if tid in st.session_state.alert_triggered_ids_current:
+                    stop_alert_sound(alert_id=tid)
+                st.session_state.alert_triggered_ids_current.discard(tid)
+                st.session_state.dismissed_alerts.discard(tid)
 
-                # --- Reset timers for disappeared objects ---
-                inactive_ids = [
-                    tid for tid in list(first_seen_frame.keys())
-                    if tid not in current_detected_ids and
-                    (frame_index - last_seen_frame.get(tid, frame_index)) > (fps * 1.0)  # 1 second inactivity
-                ]
-                for tid in inactive_ids:
-                    first_seen_frame.pop(tid, None)
-                    last_seen_frame.pop(tid, None)
-                    if tid in alert_triggered_ids:
-                        alert_triggered_ids.remove(tid)
-                    alert_placeholder.empty()
+            # Render active alerts
+            with col_alert:
+                with alert_placeholder.container():
+                    st.markdown("##### Current Alerts:")
+                    active_alerts = [
+                        tid for tid in st.session_state.alert_triggered_ids_current
+                        if tid not in st.session_state.dismissed_alerts
+                    ]
+                    if not active_alerts:
+                        st.info("No active alerts.")
+                    for alert_id in active_alerts:
+                        alert_box = st.container(border=True)
+                        alert_col_text, alert_col_close = alert_box.columns([3, 1])
+                        alert_col_text.markdown(f"**🚨 ID {alert_id} is {target_alert_class_name}**")
+                        if alert_col_close.button("❌", key=f"dismiss_{alert_id}_{frame_index}"):
+                            st.session_state.dismissed_alerts.add(alert_id)
+                            st.session_state.stop_sound_pending = alert_id
+                            st.rerun() # <<< CORRECTED: Replaced st.experimental_rerun() with st.rerun()
 
-                # --- Display Stats ---
-                metric_frame.metric("Frame Count", frame_index)
-                metric_objects.metric("Tracked Objects", len(current_detected_ids))
+            # Update the detection output frame
+            stframe.image(annotated_frame, channels="BGR", use_container_width=True)
 
-                stframe.image(
-                    annotated_frame,
-                    channels="BGR",
-                    use_container_width=True,
-                    caption=f"Processing: {st.session_state.video_name}"
-                )
+    # --- End of while loop ---
+    cap.release()
+    stop_alert_sound()  
+    st.session_state.is_running = False 
 
-        cap.release()
-        stframe.empty()
-        alert_placeholder.empty()
+    if st.session_state.source_type == 'Upload Video File':
         st.balloons()
-        st.success(f"✅ Detection complete — Processed {frame_index} frames.")
-
-
-        # Clean up temporary model directory
+        st.success(f"✅ Detection complete — processed {frame_index} total frames.")
         if use_custom_model and tmpdir:
-            try:
-                shutil.rmtree(tmpdir)
-            except OSError as e:
-                st.warning(f"Could not clean up temp directory: {e}")
+            shutil.rmtree(tmpdir, ignore_errors=True)
+    elif st.session_state.source_type == 'Use Webcam':
+        st.success("Webcam stream stopped.")
+        
+    st.rerun() # <<< CORRECTED: Replaced st.experimental_rerun() with st.rerun()
