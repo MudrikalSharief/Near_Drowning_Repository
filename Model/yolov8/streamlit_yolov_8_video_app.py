@@ -6,7 +6,7 @@ from ultralytics import YOLO
 import time
 import shutil
 import base64
-import numpy as np 
+import numpy as np
 
 # ==============================
 # 🔊 Utility Functions
@@ -93,11 +93,9 @@ def create_audio_primer_html(audio_file_path):
 
 def scale_bbox_to_original(x1, y1, x2, y2, scale_x, scale_y):
     """Scales bounding box coordinates from a resized frame back to the original frame size."""
-    # NOTE: The original code had a bug here, scaling x2 and y2 by scale_y.
-    # It should be x2 by scale_x and y2 by scale_y. Correcting the logic:
     x1_orig = int(x1 * scale_x)
     y1_orig = int(y1 * scale_y)
-    x2_orig = int(x2 * scale_x) # Corrected from scale_y
+    x2_orig = int(x2 * scale_x) 
     y2_orig = int(y2 * scale_y)
     return x1_orig, y1_orig, x2_orig, y2_orig
 
@@ -148,13 +146,15 @@ st.markdown("---")
 if "source_type" not in st.session_state:
     st.session_state.source_type = 'Upload Video File'
 if "video_source" not in st.session_state:
-    st.session_state.video_source = None # Stores path for video file OR camera index for webcam
+    st.session_state.video_source = None 
 if "is_running" not in st.session_state:
     st.session_state.is_running = False
 if "selected_classes" not in st.session_state:
     st.session_state.selected_classes = []
-if "first_seen_frame" not in st.session_state:
-    st.session_state.first_seen_frame = {}
+
+# ⭐ MODIFIED: Changed from 'first_seen_frame' to 'accumulated_frames'
+if "accumulated_frames" not in st.session_state:
+    st.session_state.accumulated_frames = {} 
 if "last_seen_frame" not in st.session_state:
     st.session_state.last_seen_frame = {}
 if "alert_triggered_ids_current" not in st.session_state:
@@ -178,7 +178,7 @@ if st.session_state.stop_sound_pending is not None:
 def stop_detection():
     st.session_state.is_running = False
     stop_alert_sound()
-    st.session_state.first_seen_frame.clear()
+    st.session_state.accumulated_frames.clear() # ⭐ MODIFIED: Clear new state variable
     st.session_state.last_seen_frame.clear()
     st.session_state.alert_triggered_ids_current.clear()
     st.session_state.dismissed_alerts.clear()
@@ -243,7 +243,7 @@ with st.sidebar:
     alert_min_duration = st.number_input(
         "Target Duration (seconds)",
         min_value=0.1,
-        value=1.0,
+        value=2.0, # ⭐ Set default to 2s as requested
         step=0.1,
         format="%.1f",
         help="Time an object must be tracked before an alert is triggered."
@@ -257,6 +257,16 @@ with st.sidebar:
         help="The specific class that triggers the duration alert (e.g., 'near-drowning')."
     )
     
+    # ⭐ NEW: Added a configurable grace period
+    grace_period_seconds = st.number_input(
+        "Detection Grace Period (seconds)",
+        min_value=0.1,
+        value=5.0, # Default to 5 seconds
+        step=0.5,
+        format="%.1f",
+        help="How long an object can be 'lost' (e.g., underwater) before its accumulated timer resets."
+    )
+
     st.markdown("---")
     
     # ⭐ Frame Rate Limiter Setting
@@ -322,7 +332,7 @@ elif st.session_state.source_type == 'Use Webcam':
             st.session_state.camera_cap = cap_preview # Store it temporarily to manage its state
             success_prev, frame_prev = cap_preview.read()
             if success_prev:
-                source_display.image(frame_prev, channels="BGR", caption="Webcam Live Preview (No Detection Running)", use_container_width=True)
+                source_display.image(frame_prev, channels="BGR", caption="Webcam Live Preview (No Detection Running)", width='stretch')
             else:
                 source_display.error("Cannot read camera feed. Check index or permissions.")
             
@@ -351,31 +361,27 @@ target_alert_class_id = next((k for k, v in model.names.items() if v == target_a
 # Button logic
 if st.session_state.is_running:
     # Dedicated Stop button when detection is running
-    st.button("🛑 STOP DETECTION", type="secondary", use_container_width=True, on_click=stop_detection)
+    st.button("🛑 STOP DETECTION", type="secondary", width='stretch', on_click=stop_detection)
 elif source_is_ready and model:
     # Dedicated Start button when source is ready
-    st.button("▶️ START DETECTION & TRACKING", type="primary", use_container_width=True, key="start_main_button")
+    st.button("▶️ START DETECTION & TRACKING", type="primary", width='stretch', key="start_main_button")
     if st.session_state.start_main_button:
         # Set running state and rerun to start the loop below
         st.session_state.is_running = True
-        st.rerun() # <<< CORRECTED: Replaced st.experimental_rerun() with st.rerun()
+        st.rerun() 
 else:
     st.warning("Please ensure a source is selected and the model is loaded.")
-
-
 # --- Main Detection Loop ---
 if st.session_state.is_running:
     
     # Reset tracking/alert state for a new run
-    st.session_state.first_seen_frame.clear()
+    st.session_state.accumulated_frames.clear() 
     st.session_state.last_seen_frame.clear()
     st.session_state.alert_triggered_ids_current.clear()
     st.session_state.dismissed_alerts.clear()
     
     # Prepare layout
     col_video, col_alert = st.columns([3, 1])
-    # Use the source_display placeholder from Step 1 for the video output in detection mode
-    # If not possible (due to scope), use a new one:
     stframe = col_video.empty() 
     alert_placeholder = col_alert.empty()
     
@@ -391,7 +397,7 @@ if st.session_state.is_running:
     if not cap.isOpened():
         st.error("Failed to open capture source. Stopping detection.")
         stop_detection()
-        st.rerun() # <<< CORRECTED: Replaced st.experimental_rerun() with st.rerun()
+        st.rerun() 
 
     # Get FPS for video files, assume 30 for live camera if unavailable
     if st.session_state.source_type == 'Upload Video File':
@@ -405,16 +411,24 @@ if st.session_state.is_running:
     # ⭐ FRAME RATE LIMITING SETUP
     if st.session_state.source_type == 'Upload Video File' and fps > max_fps_limit:
         SKIP_INTERVAL = max(1, round(fps / max_fps_limit))
+        print(f"[INFO] Video FPS: {fps:.2f}. Target FPS is {max_fps_limit}. Skipping {SKIP_INTERVAL - 1} frame(s).")
         st.info(f"Video FPS: {fps:.2f}. **Target FPS is {max_fps_limit}**. Skipping {SKIP_INTERVAL - 1} frame(s) for every {SKIP_INTERVAL} processed.")
     else:
         SKIP_INTERVAL = 1
+        print(f"[INFO] Processing every frame (Target: {max_fps_limit} FPS).")
         st.info(f"Processing every frame (Target: {max_fps_limit} FPS).")
 
     # ⭐ INPUT RESOLUTION SETUP (For maximum speed)
     NEW_WIDTH = 640
     NEW_HEIGHT = 480
+    print(f"[INFO] Processing frames internally resized to {NEW_WIDTH}x{NEW_HEIGHT}.")
     st.info(f"Processing frames internally resized to {NEW_WIDTH}x{NEW_HEIGHT} for maximum speed.")
 
+    # ⭐ Calculate grace period in frames
+    GRACE_PERIOD_FRAMES = grace_period_seconds * fps
+    print(f"[INFO] Grace Period: {grace_period_seconds:.1f}s = {GRACE_PERIOD_FRAMES:.0f} frames.")
+    st.info(f"Timer grace period: {grace_period_seconds}s. (Timer resets if object is lost for longer)")
+    
 
     with st.spinner("Processing feed..."):
         while st.session_state.is_running and cap.isOpened():
@@ -422,7 +436,7 @@ if st.session_state.is_running:
             
             if not success:
                 if st.session_state.source_type == 'Upload Video File':
-                    st.session_state.is_running = False # Stop on end of file
+                    st.session_state.is_running = False 
                     break
                 else:
                     st.error("Error reading from camera. Trying again...")
@@ -440,12 +454,10 @@ if st.session_state.is_running:
             # ⭐ OPTIMIZED DETECTION BLOCK 
             # ---------------------------------------------
             
-            # 1. Calculate scaling factors
             h_orig, w_orig, _ = frame.shape
             scale_x = w_orig / NEW_WIDTH
             scale_y = h_orig / NEW_HEIGHT
             
-            # 2. Resize the frame for FAST processing
             resized_frame = cv2.resize(frame, (NEW_WIDTH, NEW_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
             # 3. Run YOLO detection and tracking
@@ -461,6 +473,11 @@ if st.session_state.is_running:
             annotated_frame = frame.copy() 
             boxes = results[0].boxes
             current_target_class_ids = set()
+            
+            # Dictionary to hold the final labels to be drawn on the frame
+            drawing_labels = {}
+            # Temporary list for current frame's detections to print later
+            frame_detections = [] 
 
             if boxes.id is not None:
                 for i in range(len(boxes)):
@@ -468,55 +485,111 @@ if st.session_state.is_running:
                     track_id = int(boxes.id[i].item())
                     conf = float(boxes.conf[i].item())
                     
-                    # Get scaled coordinates
                     x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy().astype(int)
                     
-                    # 4. Scale the coordinates back to the original size
                     x1_orig, y1_orig, x2_orig, y2_orig = scale_bbox_to_original(
                         x1, y1, x2, y2, scale_x, scale_y
                     )
                     
-                    # Plot the box and label
                     class_name = model.names[class_id]
-                    label = f"id:{track_id} {class_name} {conf:.2f}"
                     
-                    color = (0, 0, 255) if class_name == target_alert_class_name else (255, 0, 0)
-                    
-                    cv2.rectangle(annotated_frame, (x1_orig, y1_orig), (x2_orig, y2_orig), color, 2)
-                    cv2.putText(annotated_frame, label, (x1_orig, y1_orig - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-                    
-                    # Tracking and Alert Logic
+                    # --- TRACKING AND LAST SEEN FRAME LOGIC ---
                     if class_id == target_alert_class_id:
                         current_target_class_ids.add(track_id)
                         
-                        if track_id not in st.session_state.first_seen_frame:
-                            st.session_state.first_seen_frame[track_id] = frame_index
+                        # Initialize the Event Timer if this is a new track
+                        if track_id not in st.session_state.accumulated_frames:
+                            print(f"[FRAME {frame_index:05d}] NEW TRACK: ID {track_id} detected.")
+                            st.session_state.accumulated_frames[track_id] = 0 # Start event time
+                        
+                        # Crucial: Update the last seen frame *only* when it's the target class
                         st.session_state.last_seen_frame[track_id] = frame_index
+                    
+                    # Store drawing info (time will be added after accumulation below)
+                    drawing_labels[track_id] = {
+                        'class': class_name,
+                        'conf': conf,
+                        'coords': (x1_orig, y1_orig, x2_orig, y2_orig),
+                        'color': (0, 0, 255) if class_name == target_alert_class_name else (255, 0, 0)
+                    }
 
-                        elapsed_frames = frame_index - st.session_state.first_seen_frame[track_id]
-                        elapsed_seconds = elapsed_frames / fps
+            # ---------------------------------------------
+            # ⭐ NEW: CUMULATIVE TIME ACCUMULATION & ALERT CHECK 
+            # ---------------------------------------------
 
-                        if elapsed_seconds >= alert_min_duration and track_id not in st.session_state.alert_triggered_ids_current:
-                            st.session_state.alert_triggered_ids_current.add(track_id)
-                            if track_id not in st.session_state.dismissed_alerts:
-                                play_alert_sound(AUDIO_FILE_PATH, alert_id=track_id)
-                                st.toast(f"⚠️ Alert triggered for ID {track_id} ({target_alert_class_name})")
-                            
-            # Cleanup inactive/vanished targets
+            all_tracked_ids = list(st.session_state.accumulated_frames.keys())
+
+            for track_id in all_tracked_ids:
+                
+                # Increment the accumulated time for this tracked ID by the time step.
+                # This includes the time spent lost/misclassified within the grace period.
+                st.session_state.accumulated_frames[track_id] += SKIP_INTERVAL
+                
+                elapsed_frames = st.session_state.accumulated_frames[track_id]
+                elapsed_seconds = elapsed_frames / fps
+                
+                # Check for Alert Trigger
+                if elapsed_seconds >= alert_min_duration and track_id not in st.session_state.alert_triggered_ids_current:
+                    # Trigger only if the ID was detected in the last few frames (safety check)
+                    if (frame_index - st.session_state.last_seen_frame.get(track_id, 0)) <= GRACE_PERIOD_FRAMES:
+                        st.session_state.alert_triggered_ids_current.add(track_id)
+                        if track_id not in st.session_state.dismissed_alerts:
+                            play_alert_sound(AUDIO_FILE_PATH, alert_id=track_id)
+                            st.toast(f"⚠️ Alert triggered for ID {track_id} (Total Time: {elapsed_seconds:.1f}s)")
+                            print(f"[FRAME {frame_index:05d}] ALERT TRIGGERED: ID {track_id} at {elapsed_seconds:.1f}s (Cumulative)!")
+
+                # Update terminal debug message
+                if track_id in current_target_class_ids:
+                    frame_detections.append(f"ID {track_id} ({elapsed_seconds:.1f}s)")
+                
+                # Update the drawing label with the calculated time
+                if track_id in drawing_labels:
+                    drawing_labels[track_id]['label'] = f"id:{track_id} {drawing_labels[track_id]['class']} {drawing_labels[track_id]['conf']:.2f} [{elapsed_seconds:.1f}s]"
+
+
+            # ⭐ TERMINAL PRINT - Current Detections
+            if frame_detections:
+                print(f"[FRAME {frame_index:05d}] Active Targets: {', '.join(frame_detections)}")
+
+            # --- MODIFIED: DRAWING BLOCK ---
+            # Draw all boxes using the calculated time in drawing_labels
+            for track_id, data in drawing_labels.items():
+                x1, y1, x2, y2 = data['coords']
+                label = data.get('label', f"id:{track_id} {data['class']} {data['conf']:.2f}") # Fallback label
+                color = data['color']
+                
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+
+            # ---------------------------------------------
+            # ⭐ MODIFIED: EVENT END/CLEANUP LOGIC 
+            # ---------------------------------------------
+            
+            # Inactive IDs are those whose last detection as the target class is older than the GRACE PERIOD.
             inactive_ids = [
-                tid for tid in list(st.session_state.first_seen_frame.keys())
-                if tid not in current_target_class_ids and
-                (frame_index - st.session_state.last_seen_frame.get(tid, frame_index)) > fps
+                # Check all IDs in accumulated_frames (the Event Timer)
+                tid for tid in list(st.session_state.accumulated_frames.keys())
+                # Check if the time since 'last_seen_frame' is greater than the grace period
+                if (frame_index - st.session_state.last_seen_frame.get(tid, 0)) > GRACE_PERIOD_FRAMES
             ]
+            
             for tid in inactive_ids:
-                st.session_state.first_seen_frame.pop(tid, None)
+                # ⭐ TERMINAL PRINT
+                # Note: current_time_lost is now based on 'last_seen_frame' which is when it was last seen as ALERT CLASS
+                current_time_lost = (frame_index - st.session_state.last_seen_frame.get(tid, 0)) / fps
+                print(f"[FRAME {frame_index:05d}] RESET TIMER (EVENT ENDED): ID {tid} history ({st.session_state.accumulated_frames.get(tid, 0)/fps:.1f}s) reset. Last seen {current_time_lost:.1f}s ago (Grace Period: {grace_period_seconds:.1f}s).")
+                
+                # Reset timers and flags
+                st.session_state.accumulated_frames.pop(tid, None)
                 st.session_state.last_seen_frame.pop(tid, None)
                 if tid in st.session_state.alert_triggered_ids_current:
                     stop_alert_sound(alert_id=tid)
                 st.session_state.alert_triggered_ids_current.discard(tid)
                 st.session_state.dismissed_alerts.discard(tid)
 
-            # Render active alerts
+
+            # Render active alerts (UI element remains)
             with col_alert:
                 with alert_placeholder.container():
                     st.markdown("##### Current Alerts:")
@@ -529,18 +602,21 @@ if st.session_state.is_running:
                     for alert_id in active_alerts:
                         alert_box = st.container(border=True)
                         alert_col_text, alert_col_close = alert_box.columns([3, 1])
-                        alert_col_text.markdown(f"**🚨 ID {alert_id} is {target_alert_class_name}**")
+                        
+                        current_secs = st.session_state.accumulated_frames.get(alert_id, 0) / fps
+                        alert_col_text.markdown(f"**🚨 ID {alert_id} ({target_alert_class_name})** [{current_secs:.1f}s]")
+                        
                         if alert_col_close.button("❌", key=f"dismiss_{alert_id}_{frame_index}"):
                             st.session_state.dismissed_alerts.add(alert_id)
                             st.session_state.stop_sound_pending = alert_id
-                            st.rerun() # <<< CORRECTED: Replaced st.experimental_rerun() with st.rerun()
-
+                            st.rerun() 
+            
             # Update the detection output frame
-            stframe.image(annotated_frame, channels="BGR", use_container_width=True)
+            stframe.image(annotated_frame, channels="BGR", width='stretch')
 
     # --- End of while loop ---
     cap.release()
-    stop_alert_sound()  
+    stop_alert_sound() 
     st.session_state.is_running = False 
 
     if st.session_state.source_type == 'Upload Video File':
@@ -551,4 +627,4 @@ if st.session_state.is_running:
     elif st.session_state.source_type == 'Use Webcam':
         st.success("Webcam stream stopped.")
         
-    st.rerun() # <<< CORRECTED: Replaced st.experimental_rerun() with st.rerun()
+    st.rerun()
