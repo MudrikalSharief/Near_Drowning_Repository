@@ -1,68 +1,106 @@
 import streamlit as st
+import streamlit.components.v1 as components
+import base64
+import time
 import cv2
 import os
 import tempfile
 from ultralytics import YOLO
-import time
 import shutil
-import base64
 import numpy as np
+
 
 # ==============================
 # 🔊 Utility Functions
 # ==============================
 
-def play_alert_sound(audio_path, alert_id):
-    """Play an audio alert using base64 and assign a unique ID so it can be stopped."""
-    try:
-        with open(audio_path, "rb") as f:
-            data = f.read()
-        b64 = base64.b64encode(data).decode()
 
-        # Give a unique audio tag ID per alert
+# Global flag to track what sounds should be playing
+if "playing_audio_ids" not in st.session_state:
+    st.session_state.playing_audio_ids = {}
+
+def render_audio_manager():
+    """
+    Render a persistent iframe that holds all <audio> elements and responds to commands.
+    """
+    # Build HTML with all currently playing audios
+    audio_html = ""
+    for alert_id, audio_path in st.session_state.playing_audio_ids.items():
         audio_tag_id = f"alert_audio_{alert_id}"
-
-        md = f"""
-            <audio id="{audio_tag_id}" autoplay>
+        try:
+            with open(audio_path, "rb") as f:
+                data = f.read()
+            b64 = base64.b64encode(data).decode()
+            audio_html += f"""
+              <audio id="{audio_tag_id}" autoplay loop>
                 <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-            </audio>
-            <script>
-                if (!window.activeAudios) window.activeAudios = {{}};
-                window.activeAudios['{audio_tag_id}'] = document.getElementById('{audio_tag_id}');
-            </script>
-        """
-        st.markdown(md, unsafe_allow_html=True)
-    except FileNotFoundError:
-        st.error(f"Alert sound file not found at: {audio_path}")
+              </audio>
+            """
+        except FileNotFoundError:
+            pass
+
+    full_html = f"""
+    <html>
+    <body>
+      {audio_html}
+      <script>
+        // Initialize window state
+        if (!window.activeAudios) window.activeAudios = {{}};
+        
+        // Register all audio elements currently in DOM
+        var audioElements = document.querySelectorAll('audio');
+        audioElements.forEach(function(audio) {{
+            window.activeAudios[audio.id] = audio;
+        }});
+        
+        // Stop any audio NOT in the list
+        for (const id in window.activeAudios) {{
+            if (!document.getElementById(id)) {{
+                let a = window.activeAudios[id];
+                a.pause();
+                a.currentTime = 0;
+                delete window.activeAudios[id];
+            }}
+        }}
+      </script>
+      <!-- Unique timestamp to force re-render: {time.time_ns()} -->
+    </body>
+    </html>
+    """
+    
+    # Use a fixed key so Streamlit keeps this iframe persistent
+    components.html(full_html, height=10, width=10)
+
+
+
+def play_alert_sound(audio_path, alert_id):
+    """Add an audio to the persistent manager."""
+    # Only re-render if this is a NEW audio
+    if alert_id not in st.session_state.playing_audio_ids:
+        st.session_state.playing_audio_ids[alert_id] = audio_path
+        print("Playing alert sound for ID:", alert_id)
+        render_audio_manager()
+    else:
+        # Already playing, just update the path if needed
+        st.session_state.playing_audio_ids[alert_id] = audio_path
+
 
 
 def stop_alert_sound(alert_id=None):
-    """Stop specific or all active alert sounds."""
-    if alert_id:
-        stop_script = f"""
-            <script>
-                if (window.activeAudios && window.activeAudios['alert_audio_{alert_id}']) {{
-                    let a = window.activeAudios['alert_audio_{alert_id}'];
-                    a.pause();
-                    a.currentTime = 0;
-                    delete window.activeAudios['alert_audio_{alert_id}'];
-                }}
-            </script>
-        """
+    """Remove audio(s) from the persistent manager."""
+    before_count = len(st.session_state.playing_audio_ids)
+    
+    if alert_id is not None:
+        st.session_state.playing_audio_ids.pop(alert_id, None)
     else:
-        stop_script = """
-            <script>
-                if (window.activeAudios) {
-                    for (const id in window.activeAudios) {
-                        let a = window.activeAudios[id];
-                        a.pause();
-                        a.currentTime = 0;
-                    }
-                    window.activeAudios = {};
-                }
-            </script>
-        """
-    st.markdown(stop_script, unsafe_allow_html=True)
+        st.session_state.playing_audio_ids.clear()
+    
+    after_count = len(st.session_state.playing_audio_ids)
+    
+    # Only re-render if something actually changed
+    if before_count != after_count:
+        print("Stopping alert sound for ID:", alert_id if alert_id is not None else "ALL")
+        render_audio_manager()
 
 
 def create_audio_primer_html(audio_file_path):
@@ -127,7 +165,43 @@ def load_model(model_path, device):
         else:
             st.error(f"❌ Error loading model: {e}")
         st.stop()
+        
+# ==============================
+# ⭐ Camera Scanning Function
+# ==============================
 
+@st.cache_data(show_spinner="Scanning for available cameras...")
+def get_available_cameras():
+    """Scans for available camera indices (0 to 9) and returns them as a list of descriptive strings."""
+    available_cameras = []
+    # Test up to 10 indices (0 to 9)
+    for i in range(10): 
+        try:
+            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW) # Use CAP_DSHOW for faster initialization on Windows
+            if cap.isOpened():
+                # Try to read a frame to confirm functionality
+                ret, frame = cap.read()
+                if ret:
+                    available_cameras.append(f"Camera {i} (Index: {i})")
+                else:
+                    available_cameras.append(f"Camera {i} (Index: {i}) - Inaccessible")
+                cap.release()
+            else:
+                # If cap doesn't open, we skip/ignore it silently unless it's index 0
+                if i == 0 and not available_cameras:
+                    available_cameras.append(f"Camera 0 (Default) - Not Found")
+            cap.release()
+        except Exception:
+             # Ignore exceptions during scan
+             pass
+            
+    if not available_cameras:
+        available_cameras.append("No Cameras Found (Try Index 0)")
+        return available_cameras, 0
+    
+    # Return list of names and the index of the default camera (index 0)
+    default_selection_index = next((i for i, name in enumerate(available_cameras) if "Index: 0" in name), 0)
+    return available_cameras, default_selection_index
 
 # ==============================
 # 🎨 Streamlit Setup
@@ -136,6 +210,29 @@ def load_model(model_path, device):
 st.set_page_config(page_title="Near-Drowning Detection Tracker", layout="wide")
 st.title("🏊 Duration-Based Object Tracker & Alert System")
 st.caption("Monitors near-drowning incidents based on tracked duration.")
+
+
+# ==============================
+# ⭐ NEW: Dynamic Height CSS
+# ==============================
+
+VIDEO_CONTAINER_CSS = """
+<style>
+/* Target the div that contains the st.image element using Streamlit's class names */
+.stImage > div {
+    max-height: 80vh; /* Set a maximum height (e.g., 80% of viewport height) */
+    overflow-y: auto; /* Add vertical scrollbar if content exceeds max-height */
+}
+/* Ensure the image inside scales correctly within the scrollable container */
+.stImage img {
+    max-width: 100%;
+    height: auto;
+    display: block; 
+}
+</style>
+"""
+st.markdown(VIDEO_CONTAINER_CSS, unsafe_allow_html=True)
+
 st.markdown("---")
 
 
@@ -152,7 +249,6 @@ if "is_running" not in st.session_state:
 if "selected_classes" not in st.session_state:
     st.session_state.selected_classes = []
 
-# ⭐ MODIFIED: Changed from 'first_seen_frame' to 'accumulated_frames'
 if "accumulated_frames" not in st.session_state:
     st.session_state.accumulated_frames = {} 
 if "last_seen_frame" not in st.session_state:
@@ -178,7 +274,7 @@ if st.session_state.stop_sound_pending is not None:
 def stop_detection():
     st.session_state.is_running = False
     stop_alert_sound()
-    st.session_state.accumulated_frames.clear() # ⭐ MODIFIED: Clear new state variable
+    st.session_state.accumulated_frames.clear() 
     st.session_state.last_seen_frame.clear()
     st.session_state.alert_triggered_ids_current.clear()
     st.session_state.dismissed_alerts.clear()
@@ -243,7 +339,7 @@ with st.sidebar:
     alert_min_duration = st.number_input(
         "Target Duration (seconds)",
         min_value=0.1,
-        value=2.0, # ⭐ Set default to 2s as requested
+        value=2.0, 
         step=0.1,
         format="%.1f",
         help="Time an object must be tracked before an alert is triggered."
@@ -257,11 +353,10 @@ with st.sidebar:
         help="The specific class that triggers the duration alert (e.g., 'near-drowning')."
     )
     
-    # ⭐ NEW: Added a configurable grace period
     grace_period_seconds = st.number_input(
         "Detection Grace Period (seconds)",
         min_value=0.1,
-        value=5.0, # Default to 5 seconds
+        value=1.0, 
         step=0.5,
         format="%.1f",
         help="How long an object can be 'lost' (e.g., underwater) before its accumulated timer resets."
@@ -269,7 +364,6 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # ⭐ Frame Rate Limiter Setting
     max_fps_limit = st.slider(
         "Max Processing FPS (for speed)", 
         min_value=5, 
@@ -286,7 +380,6 @@ with st.sidebar:
 
 st.header("Step 1: Select Input Source")
 
-# Use st.radio for clear selection between video file and webcam
 st.session_state.source_type = st.radio(
     "Choose your input source:",
     ['Upload Video File', 'Use Webcam'],
@@ -317,30 +410,47 @@ if st.session_state.source_type == 'Upload Video File':
 
 
 elif st.session_state.source_type == 'Use Webcam':
-    # --- Webcam Live Preview Logic ---
-    st.session_state.camera_index = st.number_input("Enter Camera Index (0 for default)", min_value=0, value=0, step=1, key='camera_index_input')
+    # --- Webcam Dropdown Logic ---
+    
+    # Get the list of available cameras and the default index
+    camera_options, default_index = get_available_cameras()
+    
+    selected_camera_name = st.selectbox(
+        "Select Camera:",
+        options=camera_options,
+        index=default_index,
+        key='camera_select'
+    )
+    
+    # Extract the camera index from the selected string (e.g., "Camera 0 (Index: 0)" -> 0)
+    try:
+        # Assumes format is "Camera X (Index: Y)"
+        index_str = selected_camera_name.split('(Index: ')[-1].replace(')', '').strip()
+        st.session_state.camera_index = int(index_str)
+    except:
+        st.session_state.camera_index = 0 # Fallback to 0 if parsing fails
+        
     st.session_state.video_source = st.session_state.camera_index
     
-    info_col.info(f"Webcam at index: {st.session_state.camera_index}")
+    info_col.info(f"Using camera index: **{st.session_state.camera_index}**")
 
-    if not st.session_state.is_running:
-        # We need a separate capture object for the PREVIEW to keep it running
-        # This cap object will be closed and re-opened when starting the main detection loop
-        cap_preview = cv2.VideoCapture(st.session_state.camera_index)
+    if not st.session_state.is_running and "No Cameras Found" not in selected_camera_name:
+        # We need a separate capture object for the PREVIEW 
+        cap_preview = cv2.VideoCapture(st.session_state.camera_index, cv2.CAP_DSHOW)
         
         if cap_preview.isOpened():
-            st.session_state.camera_cap = cap_preview # Store it temporarily to manage its state
+            st.session_state.camera_cap = cap_preview
             success_prev, frame_prev = cap_preview.read()
             if success_prev:
-                source_display.image(frame_prev, channels="BGR", caption="Webcam Live Preview (No Detection Running)", width='stretch')
+                source_display.image(frame_prev, channels="BGR", caption=f"Webcam Live Preview (Camera Index {st.session_state.camera_index})", width='stretch')
             else:
-                source_display.error("Cannot read camera feed. Check index or permissions.")
+                source_display.error(f"Cannot read camera feed from index {st.session_state.camera_index}. Check index or permissions.")
             
-            # Release the preview cap immediately so the main loop can re-open it later
+            # Release the preview cap
             cap_preview.release()
             st.session_state.camera_cap = None
         else:
-            source_display.error("Webcam not found or access denied. Check camera index.")
+            source_display.error(f"Webcam at index {st.session_state.camera_index} not found or access denied. Try a different index.")
 
 
 st.markdown("---")
@@ -392,7 +502,11 @@ if st.session_state.is_running:
     primer_placeholder.empty()
 
     # Initialize video capture (path for file, index for webcam)
-    cap = cv2.VideoCapture(st.session_state.video_source)
+    # Note: Use CAP_DSHOW for webcam if OS is Windows
+    if st.session_state.source_type == 'Use Webcam':
+        cap = cv2.VideoCapture(st.session_state.video_source, cv2.CAP_DSHOW)
+    else:
+        cap = cv2.VideoCapture(st.session_state.video_source)
     
     if not cap.isOpened():
         st.error("Failed to open capture source. Stopping detection.")
@@ -514,7 +628,7 @@ if st.session_state.is_running:
                     }
 
             # ---------------------------------------------
-            # ⭐ NEW: CUMULATIVE TIME ACCUMULATION & ALERT CHECK 
+            # ⭐ CUMULATIVE TIME ACCUMULATION & ALERT CHECK 
             # ---------------------------------------------
 
             all_tracked_ids = list(st.session_state.accumulated_frames.keys())
@@ -522,12 +636,12 @@ if st.session_state.is_running:
             for track_id in all_tracked_ids:
                 
                 # Increment the accumulated time for this tracked ID by the time step.
-                # This includes the time spent lost/misclassified within the grace period.
                 st.session_state.accumulated_frames[track_id] += SKIP_INTERVAL
                 
                 elapsed_frames = st.session_state.accumulated_frames[track_id]
                 elapsed_seconds = elapsed_frames / fps
                 
+               
                 # Check for Alert Trigger
                 if elapsed_seconds >= alert_min_duration and track_id not in st.session_state.alert_triggered_ids_current:
                     # Trigger only if the ID was detected in the last few frames (safety check)
@@ -535,7 +649,6 @@ if st.session_state.is_running:
                         st.session_state.alert_triggered_ids_current.add(track_id)
                         if track_id not in st.session_state.dismissed_alerts:
                             play_alert_sound(AUDIO_FILE_PATH, alert_id=track_id)
-                            st.toast(f"⚠️ Alert triggered for ID {track_id} (Total Time: {elapsed_seconds:.1f}s)")
                             print(f"[FRAME {frame_index:05d}] ALERT TRIGGERED: ID {track_id} at {elapsed_seconds:.1f}s (Cumulative)!")
 
                 # Update terminal debug message
@@ -548,14 +661,13 @@ if st.session_state.is_running:
 
 
             # ⭐ TERMINAL PRINT - Current Detections
-            if frame_detections:
-                print(f"[FRAME {frame_index:05d}] Active Targets: {', '.join(frame_detections)}")
+            # if frame_detections:
+            #     print(f"[FRAME {frame_index:05d}] Active Targets: {', '.join(frame_detections)}")
 
-            # --- MODIFIED: DRAWING BLOCK ---
-            # Draw all boxes using the calculated time in drawing_labels
+            # --- DRAWING BLOCK ---
             for track_id, data in drawing_labels.items():
                 x1, y1, x2, y2 = data['coords']
-                label = data.get('label', f"id:{track_id} {data['class']} {data['conf']:.2f}") # Fallback label
+                label = data.get('label', f"id:{track_id} {data['class']} {data['conf']:.2f}") 
                 color = data['color']
                 
                 cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
@@ -563,30 +675,39 @@ if st.session_state.is_running:
 
 
             # ---------------------------------------------
-            # ⭐ MODIFIED: EVENT END/CLEANUP LOGIC 
+            # ⭐ EVENT END/CLEANUP LOGIC 
             # ---------------------------------------------
             
             # Inactive IDs are those whose last detection as the target class is older than the GRACE PERIOD.
             inactive_ids = [
-                # Check all IDs in accumulated_frames (the Event Timer)
                 tid for tid in list(st.session_state.accumulated_frames.keys())
-                # Check if the time since 'last_seen_frame' is greater than the grace period
                 if (frame_index - st.session_state.last_seen_frame.get(tid, 0)) > GRACE_PERIOD_FRAMES
             ]
             
             for tid in inactive_ids:
-                # ⭐ TERMINAL PRINT
-                # Note: current_time_lost is now based on 'last_seen_frame' which is when it was last seen as ALERT CLASS
                 current_time_lost = (frame_index - st.session_state.last_seen_frame.get(tid, 0)) / fps
                 print(f"[FRAME {frame_index:05d}] RESET TIMER (EVENT ENDED): ID {tid} history ({st.session_state.accumulated_frames.get(tid, 0)/fps:.1f}s) reset. Last seen {current_time_lost:.1f}s ago (Grace Period: {grace_period_seconds:.1f}s).")
-                
-                # Reset timers and flags
+
+                # NEW: debug prints
+                print("Calling stop_alert_sound for tid:", tid)
+                print("alert_triggered_ids_current before discard:", st.session_state.alert_triggered_ids_current)
+
                 st.session_state.accumulated_frames.pop(tid, None)
                 st.session_state.last_seen_frame.pop(tid, None)
                 if tid in st.session_state.alert_triggered_ids_current:
                     stop_alert_sound(alert_id=tid)
                 st.session_state.alert_triggered_ids_current.discard(tid)
                 st.session_state.dismissed_alerts.discard(tid)
+
+                # NEW: after discard
+                print("alert_triggered_ids_current after discard:", st.session_state.alert_triggered_ids_current)
+
+
+            # Sync audio with alert state
+            # Remove audio for any IDs that are no longer in active alerts
+            for audio_id in list(st.session_state.playing_audio_ids.keys()):
+                if audio_id not in st.session_state.alert_triggered_ids_current:
+                    stop_alert_sound(alert_id=audio_id)
 
 
             # Render active alerts (UI element remains)
@@ -597,21 +718,26 @@ if st.session_state.is_running:
                         tid for tid in st.session_state.alert_triggered_ids_current
                         if tid not in st.session_state.dismissed_alerts
                     ]
+                    # print("active_alerts in UI block:", active_alerts)
+
                     if not active_alerts:
+                        stop_alert_sound()
                         st.info("No active alerts.")
+
                     for alert_id in active_alerts:
                         alert_box = st.container(border=True)
                         alert_col_text, alert_col_close = alert_box.columns([3, 1])
                         
                         current_secs = st.session_state.accumulated_frames.get(alert_id, 0) / fps
                         alert_col_text.markdown(f"**🚨 ID {alert_id} ({target_alert_class_name})** [{current_secs:.1f}s]")
-                        
+
                         if alert_col_close.button("❌", key=f"dismiss_{alert_id}_{frame_index}"):
                             st.session_state.dismissed_alerts.add(alert_id)
                             st.session_state.stop_sound_pending = alert_id
                             st.rerun() 
             
             # Update the detection output frame
+            # The custom CSS applied globally handles the height constraint here.
             stframe.image(annotated_frame, channels="BGR", width='stretch')
 
     # --- End of while loop ---
