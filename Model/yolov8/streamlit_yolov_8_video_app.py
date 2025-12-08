@@ -19,88 +19,164 @@ import numpy as np
 if "playing_audio_ids" not in st.session_state:
     st.session_state.playing_audio_ids = {}
 
-def render_audio_manager():
-    """
-    Render a persistent iframe that holds all <audio> elements and responds to commands.
-    """
-    # Build HTML with all currently playing audios
-    audio_html = ""
-    for alert_id, audio_path in st.session_state.playing_audio_ids.items():
-        audio_tag_id = f"alert_audio_{alert_id}"
-        try:
-            with open(audio_path, "rb") as f:
-                data = f.read()
-            b64 = base64.b64encode(data).decode()
-            audio_html += f"""
-              <audio id="{audio_tag_id}" autoplay loop>
-                <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-              </audio>
-            """
-        except FileNotFoundError:
-            pass
 
-    full_html = f"""
+def get_audio_web_component():
+    """
+    Create a single Web Audio API component that we control via JavaScript.
+    Uses window.parent to expose functions to parent Streamlit context.
+    """
+    html_code = """
     <html>
     <body>
-      {audio_html}
-      <script>
-        // Initialize window state
-        if (!window.activeAudios) window.activeAudios = {{}};
+    <script>
+        // Create audio context in parent window so it persists
+        if (!window.parent.audioContext) {
+            window.parent.audioContext = new (window.parent.AudioContext || window.parent.webkitAudioContext)();
+            window.parent.playingAudios = {};
+            console.log('✓ Audio context initialized');
+        }
         
-        // Register all audio elements currently in DOM
-        var audioElements = document.querySelectorAll('audio');
-        audioElements.forEach(function(audio) {{
-            window.activeAudios[audio.id] = audio;
-        }});
+        function loadAudioBuffer(audioData) {
+            return new Promise((resolve, reject) => {
+                try {
+                    const binaryString = atob(audioData);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
+                    }
+                    window.parent.audioContext.decodeAudioData(bytes.buffer, resolve, reject);
+                } catch (e) {
+                    console.error('Decode error:', e);
+                    reject(e);
+                }
+            });
+        }
         
-        // Stop any audio NOT in the list
-        for (const id in window.activeAudios) {{
-            if (!document.getElementById(id)) {{
-                let a = window.activeAudios[id];
-                a.pause();
-                a.currentTime = 0;
-                delete window.activeAudios[id];
-            }}
-        }}
-      </script>
-      <!-- Unique timestamp to force re-render: {time.time_ns()} -->
+        window.parent.playAlert = function(alertId, audioBase64) {
+            console.log('playAlert called for ID:', alertId);
+            
+            // Stop existing audio
+            if (window.parent.playingAudios[alertId]) {
+                try {
+                    window.parent.playingAudios[alertId].stop(0);
+                } catch (e) {}
+            }
+            
+            // Load and play
+            loadAudioBuffer(audioBase64).then(buffer => {
+                console.log('Buffer loaded, playing...');
+                const source = window.parent.audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.loop = true;
+                source.connect(window.parent.audioContext.destination);
+                source.start(0);
+                window.parent.playingAudios[alertId] = source;
+                console.log('✓ Audio playing for ID:', alertId);
+            }).catch(err => console.error('Audio load error:', err));
+        };
+        
+        window.parent.stopAlert = function(alertId) {
+            console.log('stopAlert called for ID:', alertId);
+            if (window.parent.playingAudios[alertId]) {
+                try {
+                    window.parent.playingAudios[alertId].stop(0);
+                    console.log('✓ Audio stopped for ID:', alertId);
+                } catch (e) {
+                    console.error('Stop error:', e);
+                }
+                delete window.parent.playingAudios[alertId];
+            }
+        };
+        
+        window.parent.stopAllAlerts = function() {
+            console.log('stopAllAlerts called');
+            for (let alertId in window.parent.playingAudios) {
+                window.parent.stopAlert(alertId);
+            }
+        };
+    </script>
     </body>
     </html>
     """
-    
-    # Use a fixed key so Streamlit keeps this iframe persistent
-    components.html(full_html, height=10, width=10)
+    return html_code
 
+
+def render_web_audio_manager():
+    """Render the Web Audio component once."""
+    components.html(get_audio_web_component(), height=10, width=10)
+
+
+# Cache audio data globally to avoid re-encoding
+_cached_audio_data = None
+
+def load_cached_audio(audio_path):
+    """Load and cache audio data."""
+    global _cached_audio_data
+    if _cached_audio_data is None:
+        try:
+            with open(audio_path, "rb") as f:
+                _cached_audio_data = base64.b64encode(f.read()).decode()
+            print(f"✓ Audio cached ({len(_cached_audio_data)} chars)")
+        except Exception as e:
+            print(f"Error loading audio: {e}")
+            return None
+    return _cached_audio_data
 
 
 def play_alert_sound(audio_path, alert_id):
-    """Add an audio to the persistent manager."""
-    # Only re-render if this is a NEW audio
+    """Play alert sound using Web Audio API."""
     if alert_id not in st.session_state.playing_audio_ids:
-        st.session_state.playing_audio_ids[alert_id] = audio_path
-        print("Playing alert sound for ID:", alert_id)
-        render_audio_manager()
-    else:
-        # Already playing, just update the path if needed
-        st.session_state.playing_audio_ids[alert_id] = audio_path
-
+        try:
+            # Get cached audio data
+            audio_data = load_cached_audio(audio_path)
+            if not audio_data:
+                return
+            
+            st.session_state.playing_audio_ids[alert_id] = True
+            print(f"Playing alert sound for ID: {alert_id}")
+            
+            # Call parent window function
+            js_code = f"""
+            <script>
+                if (window.parent.playAlert) {{
+                    window.parent.playAlert({alert_id}, '{audio_data}');
+                }}
+            </script>
+            """
+            components.html(js_code, height=1, width=1)
+        except Exception as e:
+            print(f"Error in play_alert_sound: {e}")
 
 
 def stop_alert_sound(alert_id=None):
-    """Remove audio(s) from the persistent manager."""
-    before_count = len(st.session_state.playing_audio_ids)
-    
-    if alert_id is not None:
-        st.session_state.playing_audio_ids.pop(alert_id, None)
-    else:
-        st.session_state.playing_audio_ids.clear()
-    
-    after_count = len(st.session_state.playing_audio_ids)
-    
-    # Only re-render if something actually changed
-    if before_count != after_count:
-        print("Stopping alert sound for ID:", alert_id if alert_id is not None else "ALL")
-        render_audio_manager()
+    """Stop alert sound using Web Audio API."""
+    try:
+        if alert_id is not None:
+            st.session_state.playing_audio_ids.pop(alert_id, None)
+            print(f"Stopping alert sound for ID: {alert_id}")
+            
+            js_code = f"""
+            <script>
+                if (window.parent.stopAlert) {{
+                    window.parent.stopAlert({alert_id});
+                }}
+            </script>
+            """
+            components.html(js_code, height=1, width=1)
+        else:
+            st.session_state.playing_audio_ids.clear()
+            print("Stopping all alert sounds")
+            
+            js_code = """
+            <script>
+                if (window.parent.stopAllAlerts) {
+                    window.parent.stopAllAlerts();
+                }
+            </script>
+            """
+            components.html(js_code, height=1, width=1)
+    except Exception as e:
+        print(f"Error in stop_alert_sound: {e}")
 
 
 def create_audio_primer_html(audio_file_path):
@@ -210,7 +286,7 @@ def get_available_cameras():
 st.set_page_config(page_title="Near-Drowning Detection Tracker", layout="wide")
 st.title("🏊 Duration-Based Object Tracker & Alert System")
 st.caption("Monitors near-drowning incidents based on tracked duration.")
-
+render_web_audio_manager()
 
 # ==============================
 # ⭐ NEW: Dynamic Height CSS
@@ -500,6 +576,8 @@ if st.session_state.is_running:
     primer_placeholder.markdown(create_audio_primer_html(AUDIO_FILE_PATH), unsafe_allow_html=True)
     time.sleep(0.1)
     primer_placeholder.empty()
+    # Initialize Web Audio component
+
 
     # Initialize video capture (path for file, index for webcam)
     # Note: Use CAP_DSHOW for webcam if OS is Windows
@@ -721,7 +799,6 @@ if st.session_state.is_running:
                     # print("active_alerts in UI block:", active_alerts)
 
                     if not active_alerts:
-                        stop_alert_sound()
                         st.info("No active alerts.")
 
                     for alert_id in active_alerts:
