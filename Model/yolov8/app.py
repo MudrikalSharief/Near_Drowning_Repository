@@ -343,12 +343,19 @@ if "camera_cap" not in st.session_state:
     st.session_state.camera_cap = None
 if "last_rendered_alerts" not in st.session_state:
     st.session_state.last_rendered_alerts = set()
+if "stop_pending_ids" not in st.session_state:
+    st.session_state.stop_pending_ids = set()
 
 
-# 🧩 Handle any pending sound stop (after button rerun)
+# 🧩 Handle any pending sound stops (top of every run)
 if st.session_state.stop_sound_pending is not None:
     stop_alert_sound(alert_id=st.session_state.stop_sound_pending)
     st.session_state.stop_sound_pending = None
+
+# Also process any pending IDs in the set (from button callbacks)
+for pending_id in list(st.session_state.stop_pending_ids):
+    stop_alert_sound(alert_id=pending_id)
+st.session_state.stop_pending_ids.clear()
 
 # Callback for stopping the webcam feed
 def stop_detection():
@@ -363,7 +370,17 @@ def stop_detection():
         st.session_state.camera_cap.release()
         st.session_state.camera_cap = None
     # Rerun to clear the video output and show the start button
-    st.rerun() 
+    st.rerun()
+
+# Callback for dismissing an alert and stopping its sound
+def dismiss_alert_callback(alert_id):
+    """Called when ❌ button is clicked."""
+    print(f"Alert ID {alert_id} dismissed by user.")
+    # Mark the audio to be stopped (will execute at top of next run)
+    st.session_state.stop_pending_ids.add(alert_id)
+    # Mark as dismissed
+    st.session_state.dismissed_alerts.add(alert_id)
+    st.session_state.alert_triggered_ids_current.discard(alert_id)
 
 # ==============================
 # 🧩 Sidebar Settings
@@ -437,7 +454,7 @@ with st.sidebar:
         "Detection Grace Period (seconds)",
         min_value=0.1,
         value=1.0, 
-        step=0.5,
+        step=0.1,
         format="%.1f",
         help="How long an object can be 'lost' (e.g., underwater) before its accumulated timer resets."
     )
@@ -782,59 +799,38 @@ if st.session_state.is_running:
                     stop_alert_sound(alert_id=audio_id)
 
 
-            # Render active alerts (UI element remains). Only rebuild layout when alert set changes to avoid freezing.
+            # Render active alerts (UI element remains). Only render when alert set changes to avoid duplicate key errors.
             active_alerts = [
                 tid for tid in st.session_state.alert_triggered_ids_current
                 if tid not in st.session_state.dismissed_alerts
             ]
             
-            # Phase 1: Only rebuild layout when the set of active alerts changes (prevents freezing)
+            # Only re-render if the set of active alerts has changed
             if set(active_alerts) != st.session_state.last_rendered_alerts:
                 alert_placeholder.empty()
                 with alert_placeholder:
                     st.markdown("##### Current Alerts:")
-
+                    
                     if not active_alerts:
                         st.info("No active alerts.")
-                        st.session_state.alert_rows.clear()
                     else:
-                        # Create a dedicated row container per alert id (stable across runs)
-                        st.session_state.alert_rows = {
-                            aid: st.empty()  # lightweight row placeholder
-                            for aid in active_alerts
-                        }
+                        for alert_id in active_alerts:
+                            alert_box = st.container(border=True)
+                            alert_col_text, alert_col_close = alert_box.columns([3, 1])
+                            
+                            current_secs = st.session_state.accumulated_frames.get(alert_id, 0) / fps
+                            alert_col_text.markdown(f"**🚨 ID {alert_id} ({target_alert_class_name})** [{current_secs:.1f}s]")
 
+                            # Dismiss button with callback
+                            alert_col_close.button(
+                                "❌",
+                                key=f"dismiss_{alert_id}",
+                                on_click=dismiss_alert_callback,
+                                args=(alert_id,)
+                            )
+                
                 st.session_state.last_rendered_alerts = set(active_alerts)
-
-            # Phase 2: Always render row contents so buttons are instantiated every run (enables click detection)
-            for alert_id in active_alerts:
-                row = st.session_state.alert_rows.get(alert_id)
-                if row is None:
-                    # Fallback if a new alert sneaks in before layout rebuild
-                    row = st.empty()
-                    st.session_state.alert_rows[alert_id] = row
-
-                with row:
-                    alert_box = st.container(border=True)
-                    alert_col_text, alert_col_close = alert_box.columns([3, 1])
-
-                    current_secs = st.session_state.accumulated_frames.get(alert_id, 0) / fps
-                    alert_col_text.markdown(f"**🚨 ID {alert_id} ({target_alert_class_name})** [{current_secs:.1f}s]")
-
-                    # Dismiss button (always present, click is processed immediately)
-                    if alert_col_close.button("❌", key=f"dismiss_{alert_id}"):
-                        print(f"Alert ID {alert_id} dismissed by user.")
-                        # Stop audio now and ensure stop on next rerun too
-                        stop_alert_sound(alert_id=alert_id)
-                        st.session_state.stop_sound_pending = alert_id
-                        st.session_state.dismissed_alerts.add(alert_id)
-                        st.session_state.alert_triggered_ids_current.discard(alert_id)
-
-            # Optional: clean up rows for alerts no longer active
-            for tid in list(st.session_state.alert_rows.keys()):
-                if tid not in active_alerts:
-                    st.session_state.alert_rows.pop(tid, None)
-            
+       
             # Update the detection output frame
             # The custom CSS applied globally handles the height constraint here.
             stframe.image(annotated_frame, channels="BGR", width='stretch')
