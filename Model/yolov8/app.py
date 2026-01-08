@@ -218,8 +218,8 @@ def scale_bbox_to_original(x1, y1, x2, y2, scale_x, scale_y):
 # ==============================
 
 # NOTE: Update these paths to match your system configuration
-DEFAULT_MODEL_NAME = "C:/Users/Lenovo/Marcelino-Portfolio/Near_Drowning_Repository/Model/yolov8/best.pt"
-AUDIO_FILE_PATH = "C:/Users/Lenovo/Marcelino-Portfolio/Near_Drowning_Repository/Model/yolov8/alert.mp3"
+DEFAULT_MODEL_NAME = "C:/Users/Lenovo/Near_Drowning_Repository/Model/yolov8/best.pt"
+AUDIO_FILE_PATH = "C:/Users/Lenovo/Near_Drowning_Repository/Model/yolov8/alert.mp3"
 UPLOAD_DIR = "uploaded_videos"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
