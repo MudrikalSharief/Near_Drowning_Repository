@@ -298,12 +298,25 @@ VIDEO_CONTAINER_CSS = """
 .stImage > div {
     max-height: 80vh; /* Set a maximum height (e.g., 80% of viewport height) */
     overflow-y: auto; /* Add vertical scrollbar if content exceeds max-height */
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 /* Ensure the image inside scales correctly within the scrollable container */
 .stImage img {
     max-width: 100%;
-    height: auto;
+    max-height: 100%;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
     display: block; 
+}
+/* Fullscreen mode - fill entire viewport */
+@supports (display: grid) {
+    .stImage[data-testid="stImage"] > div {
+        width: 100%;
+        height: 100%;
+    }
 }
 </style>
 """
