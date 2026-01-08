@@ -335,10 +335,14 @@ if "dismissed_alerts" not in st.session_state:
     st.session_state.dismissed_alerts = set()
 if "stop_sound_pending" not in st.session_state:
     st.session_state.stop_sound_pending = None 
+if "alert_rows" not in st.session_state:
+    st.session_state.alert_rows = {}
 if "camera_index" not in st.session_state:
     st.session_state.camera_index = 0
 if "camera_cap" not in st.session_state:
     st.session_state.camera_cap = None
+if "last_rendered_alerts" not in st.session_state:
+    st.session_state.last_rendered_alerts = set()
 
 
 # 🧩 Handle any pending sound stop (after button rerun)
@@ -467,8 +471,9 @@ st.session_state.source_type = st.radio(
 source_col, info_col = st.columns([3, 1])
 source_display = source_col.empty()
 
-# Reset video_source when switching modes
-st.session_state.video_source = None
+# Reset video_source when switching modes (only when not actively running)
+if not st.session_state.is_running:
+    st.session_state.video_source = None
 
 if st.session_state.source_type == 'Upload Video File':
     # --- Video Upload Logic ---
@@ -544,27 +549,15 @@ selected_class_ids = [k for k, v in model.names.items() if v in st.session_state
 target_alert_class_id = next((k for k, v in model.names.items() if v == target_alert_class_name), None)
 
 
-# Button logic
+# --- Main Detection Loop ---
 if st.session_state.is_running:
     # Dedicated Stop button when detection is running
     st.button("🛑 STOP DETECTION", type="secondary", width='stretch', on_click=stop_detection)
-elif source_is_ready and model:
-    # Dedicated Start button when source is ready
-    st.button("▶️ START DETECTION & TRACKING", type="primary", width='stretch', key="start_main_button")
-    if st.session_state.start_main_button:
-        # Set running state and rerun to start the loop below
-        st.session_state.is_running = True
-        st.rerun() 
-else:
-    st.warning("Please ensure a source is selected and the model is loaded.")
-# --- Main Detection Loop ---
-if st.session_state.is_running:
-    
+
     # Reset tracking/alert state for a new run
-    st.session_state.accumulated_frames.clear() 
-    st.session_state.last_seen_frame.clear()
-    st.session_state.alert_triggered_ids_current.clear()
-    st.session_state.dismissed_alerts.clear()
+  
+    
+
     
     # Prepare layout
     col_video, col_alert = st.columns([3, 1])
@@ -785,33 +778,62 @@ if st.session_state.is_running:
             # Remove audio for any IDs that are no longer in active alerts
             for audio_id in list(st.session_state.playing_audio_ids.keys()):
                 if audio_id not in st.session_state.alert_triggered_ids_current:
+                    print("the alert is done now stopping the:", audio_id)
                     stop_alert_sound(alert_id=audio_id)
 
 
-            # Render active alerts (UI element remains)
-            with col_alert:
-                with alert_placeholder.container():
+            # Render active alerts (UI element remains). Only rebuild layout when alert set changes to avoid freezing.
+            active_alerts = [
+                tid for tid in st.session_state.alert_triggered_ids_current
+                if tid not in st.session_state.dismissed_alerts
+            ]
+            
+            # Phase 1: Only rebuild layout when the set of active alerts changes (prevents freezing)
+            if set(active_alerts) != st.session_state.last_rendered_alerts:
+                alert_placeholder.empty()
+                with alert_placeholder:
                     st.markdown("##### Current Alerts:")
-                    active_alerts = [
-                        tid for tid in st.session_state.alert_triggered_ids_current
-                        if tid not in st.session_state.dismissed_alerts
-                    ]
-                    # print("active_alerts in UI block:", active_alerts)
 
                     if not active_alerts:
                         st.info("No active alerts.")
+                        st.session_state.alert_rows.clear()
+                    else:
+                        # Create a dedicated row container per alert id (stable across runs)
+                        st.session_state.alert_rows = {
+                            aid: st.empty()  # lightweight row placeholder
+                            for aid in active_alerts
+                        }
 
-                    for alert_id in active_alerts:
-                        alert_box = st.container(border=True)
-                        alert_col_text, alert_col_close = alert_box.columns([3, 1])
-                        
-                        current_secs = st.session_state.accumulated_frames.get(alert_id, 0) / fps
-                        alert_col_text.markdown(f"**🚨 ID {alert_id} ({target_alert_class_name})** [{current_secs:.1f}s]")
+                st.session_state.last_rendered_alerts = set(active_alerts)
 
-                        if alert_col_close.button("❌", key=f"dismiss_{alert_id}_{frame_index}"):
-                            st.session_state.dismissed_alerts.add(alert_id)
-                            st.session_state.stop_sound_pending = alert_id
-                            st.rerun() 
+            # Phase 2: Always render row contents so buttons are instantiated every run (enables click detection)
+            for alert_id in active_alerts:
+                row = st.session_state.alert_rows.get(alert_id)
+                if row is None:
+                    # Fallback if a new alert sneaks in before layout rebuild
+                    row = st.empty()
+                    st.session_state.alert_rows[alert_id] = row
+
+                with row:
+                    alert_box = st.container(border=True)
+                    alert_col_text, alert_col_close = alert_box.columns([3, 1])
+
+                    current_secs = st.session_state.accumulated_frames.get(alert_id, 0) / fps
+                    alert_col_text.markdown(f"**🚨 ID {alert_id} ({target_alert_class_name})** [{current_secs:.1f}s]")
+
+                    # Dismiss button (always present, click is processed immediately)
+                    if alert_col_close.button("❌", key=f"dismiss_{alert_id}"):
+                        print(f"Alert ID {alert_id} dismissed by user.")
+                        # Stop audio now and ensure stop on next rerun too
+                        stop_alert_sound(alert_id=alert_id)
+                        st.session_state.stop_sound_pending = alert_id
+                        st.session_state.dismissed_alerts.add(alert_id)
+                        st.session_state.alert_triggered_ids_current.discard(alert_id)
+
+            # Optional: clean up rows for alerts no longer active
+            for tid in list(st.session_state.alert_rows.keys()):
+                if tid not in active_alerts:
+                    st.session_state.alert_rows.pop(tid, None)
             
             # Update the detection output frame
             # The custom CSS applied globally handles the height constraint here.
@@ -831,3 +853,21 @@ if st.session_state.is_running:
         st.success("Webcam stream stopped.")
         
     st.rerun()
+
+
+elif source_is_ready and model:
+    # Dedicated Start button when source is ready
+    st.button("▶️ START DETECTION & TRACKING", type="primary", width='stretch', key="start_main_button")
+    if st.session_state.start_main_button:
+
+        st.session_state.accumulated_frames.clear() 
+        st.session_state.last_seen_frame.clear()
+        st.session_state.alert_triggered_ids_current.clear()
+        st.session_state.dismissed_alerts.clear()
+
+        # Set running state and rerun to start the loop below
+        st.session_state.is_running = True
+        st.rerun() 
+else:
+    st.warning("Please ensure a source is selected and the model is loaded.")
+    
