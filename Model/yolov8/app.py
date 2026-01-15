@@ -289,35 +289,90 @@ st.caption("Monitors near-drowning incidents based on tracked duration.")
 render_web_audio_manager()
 
 # ==============================
-# ⭐ NEW: Dynamic Height CSS
+# ⭐ NEW: Dynamic Height CSS + Fullscreen
 # ==============================
 
 VIDEO_CONTAINER_CSS = """
 <style>
-/* Target the div that contains the st.image element using Streamlit's class names */
+/* Normal mode - constrained height */
+.stImage {
+    overflow: hidden !important;
+}
+
 .stImage > div {
-    max-height: 80vh; /* Set a maximum height (e.g., 80% of viewport height) */
-    overflow-y: auto; /* Add vertical scrollbar if content exceeds max-height */
+    max-height: 100vh;
+    overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
 }
-/* Ensure the image inside scales correctly within the scrollable container */
+
 .stImage img {
     max-width: 100%;
-    max-height: 100%;
+    max-height: none !important;
     width: 100%;
-    height: 100%;
-    object-fit: contain;
+    height: auto;
+    object-fit: fill;
     display: block; 
 }
-/* Fullscreen mode - fill entire viewport */
-@supports (display: grid) {
-    .stImage[data-testid="stImage"] > div {
-        width: 100%;
-        height: 100%;
-    }
+
+/* Make fullscreen button always visible without hovering */
+.stElementToolbar {
+    opacity: 1 !important;
+    visibility: visible !important;
+    position: absolute !important;
+    top: 0 !important;
+    right: 0 !important;
+    pointer-events: auto !important;
 }
+
+/* Fullscreen mode - fill entire screen while keeping aspect ratio */
+:fullscreen .stImage {
+    width: 100vw !important;
+    height: 100vh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    max-height: none !important;
+    overflow: hidden !important;
+    overflow-y: hidden !important;
+    overflow-x: hidden !important;
+}
+
+:fullscreen .stImage > div {
+    width: 100vw !important;
+    height: 100vh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    max-height: none !important;
+    display: flex;
+}
+
+:fullscreen .stImage img {
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: none !important;
+    max-height: none !important;
+    object-fit: cover;
+    object-position: center;
+}
+
+/* Fullscreen only: overflow hidden for data-testid elements */
+:fullscreen [data-testid="stImage"] {
+    overflow: hidden !important;
+}
+
+:fullscreen [data-testid="stImageContainer"] {
+    overflow: hidden !important;
+}
+
+/* Remove height constraint from Streamlit emotion cache element in fullscreen */
+:fullscreen .st-emotion-cache-sa0fr5 {
+    height: 100% !important;
+    max-height: none !important;
+}
+
+
+
 </style>
 """
 st.markdown(VIDEO_CONTAINER_CSS, unsafe_allow_html=True)
@@ -553,7 +608,7 @@ elif st.session_state.source_type == 'Use Webcam':
             st.session_state.camera_cap = cap_preview
             success_prev, frame_prev = cap_preview.read()
             if success_prev:
-                source_display.image(frame_prev, channels="BGR", caption=f"Webcam Live Preview (Camera Index {st.session_state.camera_index})", width='stretch')
+                source_display.image(frame_prev, channels="BGR", width='stretch')
             else:
                 source_display.error(f"Cannot read camera feed from index {st.session_state.camera_index}. Check index or permissions.")
             
